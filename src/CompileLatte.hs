@@ -35,6 +35,7 @@ data LLVMType = Ti32 | Tvoid deriving Eq
 data LLVMInstr = ICall LLVMType String [(LLVMType, LLVMValue)] (Maybe Register)
                | IRetVoid
                | IRet LLVMType LLVMValue
+               | IArithm LLVMType LLVMValue LLVMValue LLVMArithmOp Register
 
 newtype ValueMap = ValueMap (M.Map String LLVMValue)
 
@@ -44,6 +45,8 @@ data LLVMFunction = LLVMFunction LLVMType String [(LLVMType, LLVMValue)] [LLVMIn
 newtype Signatures = Signatures (M.Map String LLVMFunctionType)
 
 newtype NextRegister = NextRegister Register
+
+data LLVMArithmOp = OAdd | OSub | OMul | OSDiv | OSRem
 
 initNextRegister :: NextRegister
 initNextRegister = NextRegister (Register 0)
@@ -129,6 +132,16 @@ compileExpr _ (AbsLatte.EVar ident) valueMap nextReg =
   do value <- lookupVariable (compileVariableIdent ident) valueMap
      return (value, [], nextReg)
 
+compileExpr signatures (AbsLatte.EAdd exp1 addOp exp2) valueMap nextReg0 =
+  do (val1, instr1, nextReg1) <- compileExpr signatures exp1 valueMap nextReg0
+     (val2, instr2, nextReg2) <- compileExpr signatures exp2 valueMap nextReg1
+     let (reg, nextReg3) = getNextRegister nextReg2
+     return (VRegister reg, instr1 ++ instr2 ++ [IArithm Ti32 val1 val2 (compileAddOperator addOp) reg], nextReg3)
+
+compileAddOperator :: AbsLatte.AddOp -> LLVMArithmOp
+compileAddOperator AbsLatte.Plus = OAdd
+compileAddOperator AbsLatte.Minus = OSub
+
 compileFuncIdent (AbsLatte.Ident str) | str == "printInt" = "printInt"
                                       | otherwise = "lat_" ++ str
 
@@ -157,6 +170,8 @@ showLLVMInst (ICall retType ident args Nothing) = showCall retType ident args
 showLLVMInst (ICall retType ident args (Just register)) = showRegister register ++ " = " ++ showCall retType ident args
 showLLVMInst (IRet type_ value) = "ret " ++ showType type_ ++ " " ++ showValue value
 showLLVMInst IRetVoid = "ret void"
+showLLVMInst (IArithm type_ v1 v2 op reg) =
+  showRegister reg ++ " = " ++ showLLVMArithmOp op ++ " " ++ showLLVMType type_ ++ " " ++ showValue v1 ++ ", " ++ showValue v2
 
 showCall retType ident args =
   "call " ++ showLLVMType retType ++ " @" ++ ident ++ " (" ++
@@ -165,6 +180,8 @@ showCall retType ident args =
 
   where showArgPair (type_, value) =
           showLLVMType type_ ++ " " ++ showValue value
+
+showLLVMArithmOp OAdd = "add"
 
 showLLVMFunc :: LLVMFunction -> [String]
 showLLVMFunc (LLVMFunction retType ident args body) =
