@@ -25,12 +25,18 @@ data Register = Register Int | RArgument String
 
 data LLVMValue = VConst Integer
                | VRegister Register
+               | VTrue
 
-data LLVMType = Ti32 | Tvoid deriving Eq
+data LLVMType = Ti32 | Tvoid | Ti1 deriving Eq
 data LLVMInstr = ICall LLVMType String [(LLVMType, LLVMValue)] (Maybe Register)
                | IRetVoid
                | IRet LLVMType LLVMValue
                | IArithm LLVMType LLVMValue LLVMValue LLVMArithmOp Register
+               | IBr Label
+               | IBrCond LLVMType LLVMValue Label Label
+               | ILabel Label
+
+newtype Label = Label Int
 
 newtype ValueMap = ValueMap (M.Map String LLVMValue)
 
@@ -80,19 +86,30 @@ compileLatte (AbsLatte.Program topDefs) =
       return $ unlines $ latteMain ++ allLines
 
 compileFunc :: Signatures -> AbsLatte.TopDef -> CompilerErrorM LLVMFunction
-compileFunc signatures (AbsLatte.FnDef type_ ident args (AbsLatte.Block block)) =
-   do (blockLines, _, _) <- foldM go ([], argValueMap, initNextRegister) block
+compileFunc signatures (AbsLatte.FnDef type_ ident args block) =
+   do (blockLines, _, _) <- compileBlock signatures block argValueMap initNextRegister
       return $ LLVMFunction (compileType type_) (compileFuncIdent ident) llvmArgs (blockLines ++ [IRetVoid | type_ == AbsLatte.Void])
+   where
+     argValueMap :: ValueMap
+     argValueMap = foldl (\ valueMap0 (AbsLatte.Arg type_ ident) ->
+                          setVariable (compileVariableIdent ident) (VRegister (RArgument (compileVariableIdent ident))) valueMap0)
+                         initValueMap args
+     llvmArgs :: [(LLVMType, String)]
+     llvmArgs = map (\ (AbsLatte.Arg type_ ident) -> (compileType type_, compileVariableIdent ident)) args
 
+compileBlock :: Signatures -> AbsLatte.Block -> ValueMap -> NextRegister -> CompilerErrorM ([LLVMInstr], ValueMap, NextRegister)
+compileBlock signatures (AbsLatte.Block stmts) valueMap0 nextRegister0 =
+  foldM go ([], valueMap0, nextRegister0) stmts
   where go (sLines, valueMap, nextRegister) statement =
           do (newLines, newValueMap, newNextRegister) <- compileStmt signatures statement valueMap nextRegister
              return (sLines ++ newLines, newValueMap, newNextRegister)
-        argValueMap :: ValueMap
-        argValueMap = foldl (\ valueMap0 (AbsLatte.Arg type_ ident) ->
-                             setVariable (compileVariableIdent ident) (VRegister (RArgument (compileVariableIdent ident))) valueMap0)
-                            initValueMap args
-        llvmArgs :: [(LLVMType, String)]
-        llvmArgs = map (\ (AbsLatte.Arg type_ ident) -> (compileType type_, compileVariableIdent ident)) args
+
+data Cont = Return | Jump Label
+
+compileFlowBlock :: Signatures -> AbsLatte.Stmt -> ValueMap -> NextRegister -> Cont -> CompilerErrorM ([LLVMInstr], ValueMap, NextRegister)
+compileFlowBlock signatures stmt valueMap0 nextReg0 (Jump nextBlock) =
+  do (stmts, valueMap1, nextReg1) <- compileStmt signatures stmt valueMap0 nextReg0
+     return (stmts ++ [IBr nextBlock], valueMap1, nextReg1)
 
 compileStmt :: Signatures -> AbsLatte.Stmt -> ValueMap -> NextRegister -> CompilerErrorM ([LLVMInstr], ValueMap, NextRegister)
 compileStmt signatures (AbsLatte.SExp expr) valueMap nextReg =
@@ -110,6 +127,17 @@ compileStmt signatures (AbsLatte.Decl _ [AbsLatte.Init ident expr]) valueMap nex
 compileStmt signatures (AbsLatte.Ret expr) valueMap nextReg =
   do (value, stmts, newNextReg) <- compileExpr signatures expr valueMap nextReg
      return (stmts ++ [IRet Ti32 value], valueMap, newNextReg)
+
+compileStmt signatures (AbsLatte.Cond expr stmt1) valueMap0 nextReg0 =
+  do (cond, condStmts, nextReg1) <- compileExpr signatures expr valueMap0 nextReg0
+     let (ifTrueBlock, nextReg2) = getNextLabel nextReg1
+     let (contBlock, nextReg3) = getNextLabel nextReg2
+     let branch = IBrCond Ti1 cond ifTrueBlock contBlock
+     (ifBlockStmts, valueMap1, nextReg4) <- compileFlowBlock signatures stmt1 valueMap0 nextReg3 (Jump contBlock)
+     return (condStmts ++ [branch, ILabel ifTrueBlock] ++ ifBlockStmts ++ [ILabel contBlock], valueMap1, nextReg4)
+
+compileStmt signatures (AbsLatte.BStmt block) valueMap0 nextReg0 =
+  compileBlock signatures block valueMap0 nextReg0
 
 compileExpr :: Signatures -> AbsLatte.Expr -> ValueMap -> NextRegister -> CompilerErrorM (LLVMValue, [LLVMInstr], NextRegister)
 compileExpr signatures (AbsLatte.EApp ident args) valueMap nextReg =
@@ -139,6 +167,9 @@ compileExpr signatures (AbsLatte.EAdd exp1 addOp exp2) valueMap nextReg0 =
 compileExpr signatures (AbsLatte.EMul exp1 mulOp exp2) valueMap nextReg0 =
   compileArithm signatures exp1 (compileMulOperator mulOp) exp2 valueMap nextReg0
 
+compileExpr signatures AbsLatte.ELitTrue _ nextReg =
+  return (VTrue, [], nextReg)
+
 compileArithm signatures exp1 op exp2 valueMap nextReg0 =
   do (val1, instr1, nextReg1) <- compileExpr signatures exp1 valueMap nextReg0
      (val2, instr2, nextReg2) <- compileExpr signatures exp2 valueMap nextReg1
@@ -163,29 +194,36 @@ compileVariableIdent (AbsLatte.Ident str) = str
 showValue :: LLVMValue -> String
 showValue (VConst num) = show num
 showValue (VRegister reg) = showRegister reg
+showValue VTrue = "1"
 
 showRegister :: Register -> String
 showRegister (Register num) =  "%unnamed_" ++ show num
 showRegister (RArgument string) = "%arg_" ++ string
 
-showType :: LLVMType -> String
-showType Ti32 = "i32"
-showType Tvoid = "void"
+showLLVMType :: LLVMType -> String
+showLLVMType Ti32 = "i32"
+showLLVMType Tvoid = "void"
+showLLVMType Ti1 = "i1"
 
 indent :: String -> String
 indent = ("  " ++)
 
-showLLVMType :: LLVMType -> String
-showLLVMType Tvoid = "void"
-showLLVMType Ti32 = "i32"
+showLabel :: Label -> String
+showLabel (Label num) = "label_" ++ show num
 
 showLLVMInst :: LLVMInstr -> String
 showLLVMInst (ICall retType ident args Nothing) = showCall retType ident args
 showLLVMInst (ICall retType ident args (Just register)) = showRegister register ++ " = " ++ showCall retType ident args
-showLLVMInst (IRet type_ value) = "ret " ++ showType type_ ++ " " ++ showValue value
+showLLVMInst (IRet type_ value) = "ret " ++ showLLVMType type_ ++ " " ++ showValue value
 showLLVMInst IRetVoid = "ret void"
 showLLVMInst (IArithm type_ v1 v2 op reg) =
   showRegister reg ++ " = " ++ showLLVMArithmOp op ++ " " ++ showLLVMType type_ ++ " " ++ showValue v1 ++ ", " ++ showValue v2
+showLLVMInst (IBr label) = "br label %" ++ showLabel label
+showLLVMInst (ILabel label) = showLabel label ++ ":"
+showLLVMInst (IBrCond type_ value label1 label2) =
+  "br " ++ showLLVMType type_ ++ " " ++ showValue value ++
+  ", label %" ++ showLabel label1 ++
+  ", label %" ++ showLabel label2
 
 showCall retType ident args =
   "call " ++ showLLVMType retType ++ " @" ++ ident ++ " (" ++
@@ -203,7 +241,7 @@ showLLVMArithmOp OSRem = "srem"
 
 showLLVMFunc :: LLVMFunction -> [String]
 showLLVMFunc (LLVMFunction retType ident args body) =
-          ["define " ++ showType retType ++
+          ["define " ++ showLLVMType retType ++
           " @" ++ ident ++ "(" ++
           intercalate ", " (map (\ (t, n) -> showLLVMType t ++ " " ++ showRegister (RArgument n)) args) ++
           ") {"] ++
@@ -218,3 +256,6 @@ getReturnedType string (Signatures signatures) =
 
 getNextRegister :: NextRegister -> (Register, NextRegister)
 getNextRegister (NextRegister num) = (Register num, NextRegister (num + 1))
+
+getNextLabel :: NextRegister -> (Label, NextRegister)
+getNextLabel (NextRegister num) = (Label num, NextRegister (num + 1))
