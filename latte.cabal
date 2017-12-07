@@ -22,6 +22,7 @@ library
                        ErrM
                        LexLatte
                        ParLatte
+                       LLVM
   build-depends:       base >= 4.7 && < 5
                      , array
                      , containers
