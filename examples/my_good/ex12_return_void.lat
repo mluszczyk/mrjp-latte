@@ -2,11 +2,14 @@ void explicitReturn() {
   if (2 == 2) {
     return;
   }
+  printInt(213);
 }
 
 void implicitReturn() {
   if (2 == 2) {
     int a = 5;
+  } else {
+    printInt(333);
   }
   return;
 }
