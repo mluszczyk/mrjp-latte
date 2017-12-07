@@ -39,6 +39,9 @@ data LLVMInstr = ICall LLVMType String [(LLVMType, LLVMValue)] (Maybe Register)
                | ILoad LLVMType LLVMType Register Register
                | IStore LLVMType LLVMValue LLVMType Register
                | IAlloca LLVMType Register
+               | IIcmp LLVMCond LLVMType LLVMValue LLVMValue Register
+
+data LLVMCond = RelOpEQ | RelOpNE | RelOpSGT | RelOpSGE | RelOpSLT | RelOpSLE
 
 newtype Label = Label Int
 
@@ -171,7 +174,6 @@ compileStmt signatures (AbsLatte.CondElse expr stmt1 stmt2) valueMap0 nextReg0 =
      (ifElseBlockStmts, nextReg6) <- compileFlowBlock signatures stmt2 valueMap0 nextReg5 (Jump contBlock)
      return (condStmts ++ [branch, ILabel ifTrueBlock] ++ ifTrueBlockStmts ++ [ILabel ifElseBlock] ++ ifElseBlockStmts ++ [ILabel contBlock], valueMap0, nextReg6)
 
-
 compileStmt signatures (AbsLatte.BStmt block) valueMap0 nextReg0 =
   do (instrs, nextReg1) <- compileBlock signatures block valueMap0 nextReg0
      return (instrs, valueMap0, nextReg1)
@@ -210,6 +212,19 @@ compileExpr signatures AbsLatte.ELitTrue _ nextReg =
 
 compileExpr signatures AbsLatte.ELitFalse _ nextReg =
   return (VFalse, [], nextReg)
+
+compileExpr signatures (AbsLatte.ERel exp1 relOp exp2) valueMap nextReg0 =
+  do (val1, instr1, nextReg1) <- compileExpr signatures exp1 valueMap nextReg0
+     (val2, instr2, nextReg2) <- compileExpr signatures exp2 valueMap nextReg1
+     let (reg, nextReg3) = getNextRegister nextReg2
+     return (VRegister reg, instr1 ++ instr2 ++ [IIcmp (compileRelOp relOp) Ti32 val1 val2 reg], nextReg3)
+
+compileRelOp AbsLatte.GE  = RelOpSGE
+compileRelOp AbsLatte.GTH = RelOpSGT
+compileRelOp AbsLatte.LE  = RelOpSLE
+compileRelOp AbsLatte.LTH = RelOpSLT
+compileRelOp AbsLatte.EQU = RelOpEQ
+compileRelOp AbsLatte.NE = RelOpNE
 
 compileArithm signatures exp1 op exp2 valueMap nextReg0 =
   do (val1, instr1, nextReg1) <- compileExpr signatures exp1 valueMap nextReg0
@@ -274,6 +289,10 @@ showLLVMInst (IAlloca type_ reg) =
 showLLVMInst (IStore valType val ptrType ptr) =
   "store " ++ showLLVMType valType ++ " " ++ showValue val ++ ", " ++
   showLLVMType ptrType ++ "* " ++ showRegister ptr
+showLLVMInst (IIcmp cond valType val1 val2 reg) =
+  showRegister reg ++ " = " ++
+  "icmp " ++ showLLVMCond cond ++ " " ++ showLLVMType valType ++ " " ++
+  showValue val1 ++ ", " ++ showValue val2
 
 showCall retType ident args =
   "call " ++ showLLVMType retType ++ " @" ++ ident ++ " (" ++
@@ -288,6 +307,14 @@ showLLVMArithmOp OMul = "mul"
 showLLVMArithmOp OSub = "sub"
 showLLVMArithmOp OSDiv = "sdiv"
 showLLVMArithmOp OSRem = "srem"
+
+showLLVMCond :: LLVMCond -> String
+showLLVMCond RelOpSLE = "sle"
+showLLVMCond RelOpSLT = "slt"
+showLLVMCond RelOpSGE = "sge"
+showLLVMCond RelOpSGT = "sgt"
+showLLVMCond RelOpEQ = "eq"
+showLLVMCond RelOpNE = "ne"
 
 showLLVMFunc :: LLVMFunction -> [String]
 showLLVMFunc (LLVMFunction retType ident args body) =
