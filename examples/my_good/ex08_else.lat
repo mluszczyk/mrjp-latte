@@ -1,0 +1,8 @@
+int main() {
+  if (false) {
+    printInt(64);
+  } else {
+    printInt(14);
+  }
+  return 0;
+}

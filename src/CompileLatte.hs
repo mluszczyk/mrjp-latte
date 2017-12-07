@@ -26,6 +26,7 @@ data Register = Register Int | RArgument String
 data LLVMValue = VConst Integer
                | VRegister Register
                | VTrue
+               | VFalse
 
 data LLVMType = Ti32 | Tvoid | Ti1 deriving Eq
 data LLVMInstr = ICall LLVMType String [(LLVMType, LLVMValue)] (Maybe Register)
@@ -136,6 +137,17 @@ compileStmt signatures (AbsLatte.Cond expr stmt1) valueMap0 nextReg0 =
      (ifBlockStmts, valueMap1, nextReg4) <- compileFlowBlock signatures stmt1 valueMap0 nextReg3 (Jump contBlock)
      return (condStmts ++ [branch, ILabel ifTrueBlock] ++ ifBlockStmts ++ [ILabel contBlock], valueMap1, nextReg4)
 
+compileStmt signatures (AbsLatte.CondElse expr stmt1 stmt2) valueMap0 nextReg0 =
+  do (cond, condStmts, nextReg1) <- compileExpr signatures expr valueMap0 nextReg0
+     let (ifTrueBlock, nextReg2) = getNextLabel nextReg1
+     let (ifElseBlock, nextReg3) = getNextLabel nextReg2
+     let (contBlock, nextReg4) = getNextLabel nextReg3
+     let branch = IBrCond Ti1 cond ifTrueBlock ifElseBlock
+     (ifTrueBlockStmts, valueMap1, nextReg5) <- compileFlowBlock signatures stmt1 valueMap0 nextReg4 (Jump contBlock)
+     (ifElseBlockStmts, valueMap2, nextReg6) <- compileFlowBlock signatures stmt2 valueMap0 nextReg5 (Jump contBlock)
+     return (condStmts ++ [branch, ILabel ifTrueBlock] ++ ifTrueBlockStmts ++ [ILabel ifElseBlock] ++ ifElseBlockStmts ++ [ILabel contBlock], valueMap1, nextReg6)
+
+
 compileStmt signatures (AbsLatte.BStmt block) valueMap0 nextReg0 =
   compileBlock signatures block valueMap0 nextReg0
 
@@ -170,6 +182,9 @@ compileExpr signatures (AbsLatte.EMul exp1 mulOp exp2) valueMap nextReg0 =
 compileExpr signatures AbsLatte.ELitTrue _ nextReg =
   return (VTrue, [], nextReg)
 
+compileExpr signatures AbsLatte.ELitFalse _ nextReg =
+  return (VFalse, [], nextReg)
+
 compileArithm signatures exp1 op exp2 valueMap nextReg0 =
   do (val1, instr1, nextReg1) <- compileExpr signatures exp1 valueMap nextReg0
      (val2, instr2, nextReg2) <- compileExpr signatures exp2 valueMap nextReg1
@@ -195,6 +210,7 @@ showValue :: LLVMValue -> String
 showValue (VConst num) = show num
 showValue (VRegister reg) = showRegister reg
 showValue VTrue = "1"
+showValue VFalse = "0"
 
 showRegister :: Register -> String
 showRegister (Register num) =  "%unnamed_" ++ show num
