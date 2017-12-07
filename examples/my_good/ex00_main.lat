@@ -1,3 +1,4 @@
 int main() {
   printInt(123);
+  return 0;
 }
