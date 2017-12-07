@@ -1,0 +1,26 @@
+void explicitReturn() {
+  if (2 == 2) {
+    return;
+  }
+}
+
+void implicitReturn() {
+  if (2 == 2) {
+    int a = 5;
+  }
+  return;
+}
+
+void returnInTheMiddle() {
+  int a = 5;
+  return;
+  printInt(123);
+}
+
+int main() {
+  explicitReturn();
+  implicitReturn();
+  returnInTheMiddle();
+  printInt(11);
+  return 0;
+}

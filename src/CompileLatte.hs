@@ -124,6 +124,9 @@ compileStmt signatures (AbsLatte.Ret expr) valueMap nextReg =
   do (value, stmts, newNextReg) <- compileExpr signatures expr valueMap nextReg
      return (stmts ++ [LLVM.IRet LLVM.Ti32 value], valueMap, newNextReg)
 
+compileStmt signatures AbsLatte.VRet valueMap nextReg =
+  return ([LLVM.IRetVoid], valueMap, nextReg)
+
 compileStmt signatures (AbsLatte.Cond expr stmt1) valueMap0 nextReg0 =
   do (cond, condStmts, nextReg1) <- compileExpr signatures expr valueMap0 nextReg0
      let (ifTrueBlock, nextReg2) = getNextLabel nextReg1
