@@ -33,10 +33,14 @@ data LLVMValue = VConst Integer
 
 data LLVMType = Ti32 | Tvoid deriving Eq
 data LLVMInstr = ICall LLVMType String [(LLVMType, LLVMValue)] (Maybe Register)
+               | IRetVoid
+               | IRet LLVMType LLVMValue
 
 newtype ValueMap = ValueMap (M.Map String LLVMValue)
 
 data LLVMFunctionType = LLVMFunctionType [LLVMType] LLVMType
+data LLVMFunction = LLVMFunction LLVMType String [(LLVMType, LLVMValue)] [LLVMInstr]
+
 newtype Signatures = Signatures (M.Map String LLVMFunctionType)
 
 newtype NextRegister = NextRegister Register
@@ -74,23 +78,19 @@ compileLatte :: AbsLatte.Program -> CompilerErrorM String
 compileLatte (AbsLatte.Program topDefs) =
    let signatures = collectSignatures topDefs in
    do funcLines <- mapM (compileFunc signatures) topDefs
-      let allLines = concat funcLines
+      let allLines = concatMap showLLVMFunc funcLines
       return $ unlines $ latteMain ++ allLines
 
-compileFunc :: Signatures -> AbsLatte.TopDef -> CompilerErrorM [String]
+compileFunc :: Signatures -> AbsLatte.TopDef -> CompilerErrorM LLVMFunction
 compileFunc signatures (AbsLatte.FnDef type_ ident args (AbsLatte.Block block)) =
    do (blockLines, _, _) <- foldM go ([], initValueMap, initNextRegister) block
-      return $ ["define " ++ showType type_ ++
-                " @" ++ compileFuncIdent ident ++ "() {"] ++
-                map indent blockLines ++
-                [indent "ret void" | type_ == AbsLatte.Void] ++
-                ["}"]
+      return $ LLVMFunction (compileType type_) (compileFuncIdent ident) [] (blockLines ++ [IRetVoid | type_ == AbsLatte.Void])
 
   where go (sLines, valueMap, nextRegister) statement =
           do (newLines, newValueMap, newNextRegister) <- compileStmt signatures statement valueMap nextRegister
              return (sLines ++ newLines, newValueMap, newNextRegister)
 
-compileStmt :: Signatures -> AbsLatte.Stmt -> ValueMap -> NextRegister -> CompilerErrorM ([String], ValueMap, NextRegister)
+compileStmt :: Signatures -> AbsLatte.Stmt -> ValueMap -> NextRegister -> CompilerErrorM ([LLVMInstr], ValueMap, NextRegister)
 compileStmt signatures (AbsLatte.SExp expr) valueMap nextReg =
    do (_, stmts, newNextReg) <- compileExpr signatures expr valueMap nextReg
       return (stmts, valueMap, newNextReg)
@@ -105,17 +105,17 @@ compileStmt signatures (AbsLatte.Decl _ [AbsLatte.Init ident expr]) valueMap nex
 
 compileStmt signatures (AbsLatte.Ret expr) valueMap nextReg =
   do (value, stmts, newNextReg) <- compileExpr signatures expr valueMap nextReg
-     return (stmts ++ ["ret i32 " ++ showValue value], valueMap, newNextReg)
+     return (stmts ++ [IRet Ti32 value], valueMap, newNextReg)
 
-compileExpr :: Signatures -> AbsLatte.Expr -> ValueMap -> NextRegister -> CompilerErrorM (LLVMValue, [String], NextRegister)
+compileExpr :: Signatures -> AbsLatte.Expr -> ValueMap -> NextRegister -> CompilerErrorM (LLVMValue, [LLVMInstr], NextRegister)
 compileExpr signatures (AbsLatte.EApp ident args) valueMap nextReg =
    do (sLines, argVals, nextReg1) <- foldM go ([], [], nextReg) args
       retType <- getReturnedType (compileFuncIdent ident) signatures
       if retType == Tvoid then
-        return (VConst 0, sLines ++ [showLLVMInst $ ICall retType (compileFuncIdent ident) [(Ti32, value) | value <- argVals] Nothing] , nextReg1)
+        return (VConst 0, sLines ++ [ICall retType (compileFuncIdent ident) [(Ti32, value) | value <- argVals] Nothing] , nextReg1)
       else do
         let (register, nextReg2) = getNextRegister nextReg1
-        return (VRegister register, sLines ++ [showLLVMInst $ ICall retType (compileFuncIdent ident) [(Ti32, value) | value <- argVals] (Just register)], nextReg2)
+        return (VRegister register, sLines ++ [ICall retType (compileFuncIdent ident) [(Ti32, value) | value <- argVals] (Just register)], nextReg2)
 
    where
      go (sLines, argValues, nextReg1) argExpr =
@@ -141,9 +141,9 @@ showValue (VRegister reg) = showRegister reg
 showRegister :: Register -> String
 showRegister (Register num) =  "%unnamed_" ++ show num
 
-showType :: AbsLatte.Type -> String
-showType AbsLatte.Int = "i32"
-showType AbsLatte.Void = "void"
+showType :: LLVMType -> String
+showType Ti32 = "i32"
+showType Tvoid = "void"
 
 indent :: String -> String
 indent = ("  " ++)
@@ -155,6 +155,9 @@ showLLVMType Ti32 = "i32"
 showLLVMInst :: LLVMInstr -> String
 showLLVMInst (ICall retType ident args Nothing) = showCall retType ident args
 showLLVMInst (ICall retType ident args (Just register)) = showRegister register ++ " = " ++ showCall retType ident args
+showLLVMInst (IRet type_ value) = "ret " ++ showType type_ ++ " " ++ showValue value
+showLLVMInst IRetVoid = "ret void"
+
 showCall retType ident args =
   "call " ++ showLLVMType retType ++ " @" ++ ident ++ " (" ++
   intercalate ", " (map showArgPair args) ++
@@ -163,6 +166,12 @@ showCall retType ident args =
   where showArgPair (type_, value) =
           showLLVMType type_ ++ " " ++ showValue value
 
+showLLVMFunc :: LLVMFunction -> [String]
+showLLVMFunc (LLVMFunction retType ident args body) =
+          ["define " ++ showType retType ++
+          " @" ++ ident ++ "() {"] ++
+          map (indent . showLLVMInst) body ++
+          ["}"]
 
 getReturnedType :: String -> Signatures -> CompilerErrorM LLVMType
 getReturnedType string (Signatures signatures) =
