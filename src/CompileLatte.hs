@@ -88,7 +88,7 @@ compileLatte (AbsLatte.Program topDefs) =
 
 compileFunc :: Signatures -> AbsLatte.TopDef -> CompilerErrorM LLVMFunction
 compileFunc signatures (AbsLatte.FnDef type_ ident args block) =
-   do (blockLines, _, _) <- compileBlock signatures block argValueMap initNextRegister
+   do (blockLines, _) <- compileBlock signatures block argValueMap initNextRegister
       return $ LLVMFunction (compileType type_) (compileFuncIdent ident) llvmArgs (blockLines ++ [IRetVoid | type_ == AbsLatte.Void])
    where
      argValueMap :: ValueMap
@@ -98,19 +98,20 @@ compileFunc signatures (AbsLatte.FnDef type_ ident args block) =
      llvmArgs :: [(LLVMType, String)]
      llvmArgs = map (\ (AbsLatte.Arg type_ ident) -> (compileType type_, compileVariableIdent ident)) args
 
-compileBlock :: Signatures -> AbsLatte.Block -> ValueMap -> NextRegister -> CompilerErrorM ([LLVMInstr], ValueMap, NextRegister)
+compileBlock :: Signatures -> AbsLatte.Block -> ValueMap -> NextRegister -> CompilerErrorM ([LLVMInstr], NextRegister)
 compileBlock signatures (AbsLatte.Block stmts) valueMap0 nextRegister0 =
-  foldM go ([], valueMap0, nextRegister0) stmts
+  do (instrs, _, reg) <- foldM go ([], valueMap0, nextRegister0) stmts
+     return (instrs, reg)
   where go (sLines, valueMap, nextRegister) statement =
           do (newLines, newValueMap, newNextRegister) <- compileStmt signatures statement valueMap nextRegister
              return (sLines ++ newLines, newValueMap, newNextRegister)
 
 data Cont = Return | Jump Label
 
-compileFlowBlock :: Signatures -> AbsLatte.Stmt -> ValueMap -> NextRegister -> Cont -> CompilerErrorM ([LLVMInstr], ValueMap, NextRegister)
+compileFlowBlock :: Signatures -> AbsLatte.Stmt -> ValueMap -> NextRegister -> Cont -> CompilerErrorM ([LLVMInstr], NextRegister)
 compileFlowBlock signatures stmt valueMap0 nextReg0 (Jump nextBlock) =
   do (stmts, valueMap1, nextReg1) <- compileStmt signatures stmt valueMap0 nextReg0
-     return (stmts ++ [IBr nextBlock], valueMap1, nextReg1)
+     return (stmts ++ [IBr nextBlock], nextReg1)
 
 compileStmt :: Signatures -> AbsLatte.Stmt -> ValueMap -> NextRegister -> CompilerErrorM ([LLVMInstr], ValueMap, NextRegister)
 compileStmt signatures (AbsLatte.SExp expr) valueMap nextReg =
@@ -134,8 +135,8 @@ compileStmt signatures (AbsLatte.Cond expr stmt1) valueMap0 nextReg0 =
      let (ifTrueBlock, nextReg2) = getNextLabel nextReg1
      let (contBlock, nextReg3) = getNextLabel nextReg2
      let branch = IBrCond Ti1 cond ifTrueBlock contBlock
-     (ifBlockStmts, valueMap1, nextReg4) <- compileFlowBlock signatures stmt1 valueMap0 nextReg3 (Jump contBlock)
-     return (condStmts ++ [branch, ILabel ifTrueBlock] ++ ifBlockStmts ++ [ILabel contBlock], valueMap1, nextReg4)
+     (ifBlockStmts, nextReg4) <- compileFlowBlock signatures stmt1 valueMap0 nextReg3 (Jump contBlock)
+     return (condStmts ++ [branch, ILabel ifTrueBlock] ++ ifBlockStmts ++ [ILabel contBlock], valueMap0, nextReg4)
 
 compileStmt signatures (AbsLatte.CondElse expr stmt1 stmt2) valueMap0 nextReg0 =
   do (cond, condStmts, nextReg1) <- compileExpr signatures expr valueMap0 nextReg0
@@ -143,13 +144,14 @@ compileStmt signatures (AbsLatte.CondElse expr stmt1 stmt2) valueMap0 nextReg0 =
      let (ifElseBlock, nextReg3) = getNextLabel nextReg2
      let (contBlock, nextReg4) = getNextLabel nextReg3
      let branch = IBrCond Ti1 cond ifTrueBlock ifElseBlock
-     (ifTrueBlockStmts, valueMap1, nextReg5) <- compileFlowBlock signatures stmt1 valueMap0 nextReg4 (Jump contBlock)
-     (ifElseBlockStmts, valueMap2, nextReg6) <- compileFlowBlock signatures stmt2 valueMap0 nextReg5 (Jump contBlock)
-     return (condStmts ++ [branch, ILabel ifTrueBlock] ++ ifTrueBlockStmts ++ [ILabel ifElseBlock] ++ ifElseBlockStmts ++ [ILabel contBlock], valueMap1, nextReg6)
+     (ifTrueBlockStmts, nextReg5) <- compileFlowBlock signatures stmt1 valueMap0 nextReg4 (Jump contBlock)
+     (ifElseBlockStmts, nextReg6) <- compileFlowBlock signatures stmt2 valueMap0 nextReg5 (Jump contBlock)
+     return (condStmts ++ [branch, ILabel ifTrueBlock] ++ ifTrueBlockStmts ++ [ILabel ifElseBlock] ++ ifElseBlockStmts ++ [ILabel contBlock], valueMap0, nextReg6)
 
 
 compileStmt signatures (AbsLatte.BStmt block) valueMap0 nextReg0 =
-  compileBlock signatures block valueMap0 nextReg0
+  do (instrs, nextReg1) <- compileBlock signatures block valueMap0 nextReg0
+     return (instrs, valueMap0, nextReg1)
 
 compileExpr :: Signatures -> AbsLatte.Expr -> ValueMap -> NextRegister -> CompilerErrorM (LLVMValue, [LLVMInstr], NextRegister)
 compileExpr signatures (AbsLatte.EApp ident args) valueMap nextReg =
