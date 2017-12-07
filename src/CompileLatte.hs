@@ -133,14 +133,26 @@ compileExpr _ (AbsLatte.EVar ident) valueMap nextReg =
      return (value, [], nextReg)
 
 compileExpr signatures (AbsLatte.EAdd exp1 addOp exp2) valueMap nextReg0 =
+  compileArithm signatures exp1 (compileAddOperator addOp) exp2 valueMap nextReg0
+
+compileExpr signatures (AbsLatte.EMul exp1 mulOp exp2) valueMap nextReg0 =
+  compileArithm signatures exp1 (compileMulOperator mulOp) exp2 valueMap nextReg0
+
+compileArithm signatures exp1 op exp2 valueMap nextReg0 =
   do (val1, instr1, nextReg1) <- compileExpr signatures exp1 valueMap nextReg0
      (val2, instr2, nextReg2) <- compileExpr signatures exp2 valueMap nextReg1
      let (reg, nextReg3) = getNextRegister nextReg2
-     return (VRegister reg, instr1 ++ instr2 ++ [IArithm Ti32 val1 val2 (compileAddOperator addOp) reg], nextReg3)
+     return (VRegister reg, instr1 ++ instr2 ++ [IArithm Ti32 val1 val2 op reg], nextReg3)
+
 
 compileAddOperator :: AbsLatte.AddOp -> LLVMArithmOp
 compileAddOperator AbsLatte.Plus = OAdd
 compileAddOperator AbsLatte.Minus = OSub
+
+compileMulOperator :: AbsLatte.MulOp -> LLVMArithmOp
+compileMulOperator AbsLatte.Div = OSDiv
+compileMulOperator AbsLatte.Mod = OSRem
+compileMulOperator AbsLatte.Times = OMul
 
 compileFuncIdent (AbsLatte.Ident str) | str == "printInt" = "printInt"
                                       | otherwise = "lat_" ++ str
@@ -182,6 +194,10 @@ showCall retType ident args =
           showLLVMType type_ ++ " " ++ showValue value
 
 showLLVMArithmOp OAdd = "add"
+showLLVMArithmOp OMul = "mul"
+showLLVMArithmOp OSub = "sub"
+showLLVMArithmOp OSDiv = "sdiv"
+showLLVMArithmOp OSRem = "srem"
 
 showLLVMFunc :: LLVMFunction -> [String]
 showLLVMFunc (LLVMFunction retType ident args body) =
