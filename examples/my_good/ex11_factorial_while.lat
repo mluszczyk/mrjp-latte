@@ -1,0 +1,10 @@
+int main() {
+  int num = 5;
+  int fac = 1;
+  while (num > 0) {
+    fac = num * fac;
+    num = num - 1;
+  }
+  printInt(fac);
+  return 0;
+}

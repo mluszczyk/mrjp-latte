@@ -174,6 +174,15 @@ compileStmt signatures (AbsLatte.CondElse expr stmt1 stmt2) valueMap0 nextReg0 =
      (ifElseBlockStmts, nextReg6) <- compileFlowBlock signatures stmt2 valueMap0 nextReg5 (Jump contBlock)
      return (condStmts ++ [branch, ILabel ifTrueBlock] ++ ifTrueBlockStmts ++ [ILabel ifElseBlock] ++ ifElseBlockStmts ++ [ILabel contBlock], valueMap0, nextReg6)
 
+compileStmt signatures (AbsLatte.While expr stmt) valueMap0 nextReg0 =
+  do let (condBlock, nextReg1) = getNextLabel nextReg0
+     let (bodyBlock, nextReg2) = getNextLabel nextReg1
+     let (contBlock, nextReg3) = getNextLabel nextReg2
+     (bodyBlockInstrs, nextReg4) <- compileFlowBlock signatures stmt valueMap0 nextReg3 (Jump condBlock)
+     (cond, condInstrs, nextReg5) <- compileExpr signatures expr valueMap0 nextReg4
+     let condBlockInstrs = condInstrs ++ [IBrCond Ti1 cond bodyBlock contBlock]
+     return ([IBr condBlock, ILabel bodyBlock] ++ bodyBlockInstrs ++ [ILabel condBlock]  ++ condBlockInstrs ++ [ILabel contBlock], valueMap0, nextReg5)
+
 compileStmt signatures (AbsLatte.BStmt block) valueMap0 nextReg0 =
   do (instrs, nextReg1) <- compileBlock signatures block valueMap0 nextReg0
      return (instrs, valueMap0, nextReg1)
