@@ -1,0 +1,10 @@
+void printThreeInts(int a, int b, int c) {
+  printInt(a);
+  printInt(b);
+  printInt(c);
+}
+
+int main() {
+  printThreeInts(1, 2);
+  return 0;
+}

@@ -5,7 +5,7 @@ import Data.Maybe (fromMaybe)
 import qualified AbsLatte
 import CompilerErr (CompilerErrorM, raiseCEUndefinedVariable, raiseCEUndefinedFunction)
 import qualified CompilerErr
-import Control.Monad (foldM)
+import Control.Monad (foldM, when)
 
 import qualified LLVM
 
@@ -197,8 +197,11 @@ compileStmt signatures (AbsLatte.BStmt block) valueMap0 nextReg0 =
 
 compileExpr :: Signatures -> AbsLatte.Expr -> ValueMap -> NextRegister -> CompilerErrorM (LLVM.Value, LLVM.Type, [LLVM.Instr], NextRegister)
 compileExpr signatures (AbsLatte.EApp ident args) valueMap nextReg =
-   do (sLines, argVals, nextReg1) <- foldM go ([], [], nextReg) args
-      retType <- getReturnedType (compileFuncIdent ident) signatures (getPosition ident)
+   do (sLines, argVals, argTypes, nextReg1) <- foldM go ([], [], [], nextReg) args
+      (LLVM.FunctionType expectedArgTypes retType) <- getType (compileFuncIdent ident) signatures (getPosition ident)
+      mapM_ (\ (num, actType, expType) -> (checkType actType expType ("argument " ++ show num ++ " in function call")))
+            (zip3 [1..] argTypes expectedArgTypes)
+      when (length argTypes /= length expectedArgTypes) (CompilerErr.raiseCETypeError "wrong number of function arguments")
       if retType == LLVM.Tvoid then
         return (LLVM.VConst 0, retType, sLines ++ [LLVM.ICall retType (compileFuncIdent ident) [(LLVM.Ti32, value) | value <- argVals] Nothing] , nextReg1)
       else do
@@ -206,10 +209,9 @@ compileExpr signatures (AbsLatte.EApp ident args) valueMap nextReg =
         return (LLVM.VRegister register, retType, sLines ++ [LLVM.ICall retType (compileFuncIdent ident) [(LLVM.Ti32, value) | value <- argVals] (Just register)], nextReg2)
 
    where
-     go (sLines, argValues, nextReg1) argExpr =
+     go (sLines, argValues, argTypes, nextReg1) argExpr =
            do (val, type_, newLines, nextReg2) <- compileExpr signatures argExpr valueMap nextReg1
-              -- todo: check arg type
-              return (sLines ++ newLines, argValues ++ [val], nextReg2)
+              return (sLines ++ newLines, argValues ++ [val], argTypes ++ [type_], nextReg2)
 
 compileExpr _ (AbsLatte.ELitInt int) valueMap nextReg =
     return (LLVM.VConst int, LLVM.Ti32, [], nextReg)
@@ -270,10 +272,10 @@ compileMulOperator AbsLatte.Times = LLVM.OMul
 compileFuncIdent (AbsLatte.CIdent (_, str)) = str
 compileVariableIdent (AbsLatte.CIdent (_, str)) = str
 
-getReturnedType :: String -> Signatures -> CompilerErr.Position -> CompilerErrorM LLVM.Type
-getReturnedType string signatures position =
+getType :: String -> Signatures -> CompilerErr.Position -> CompilerErrorM LLVM.FunctionType
+getType string signatures position =
   maybe (raiseCEUndefinedFunction string position)
-  (\ (LLVM.FunctionType _ retType) -> return retType )
+  return
   (getMaybeType string signatures)
 
 getMaybeType :: String -> Signatures -> Maybe LLVM.FunctionType
