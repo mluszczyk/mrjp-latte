@@ -1,7 +1,10 @@
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module CompilerErr where
 
 data Position = Position { row :: Int
                          , column :: Int }
+builtinPosition :: Position
 builtinPosition = Position { row = -1 , column = -1 }
 
 data CompilerError = CEUndefinedVariable { ceIdent :: String

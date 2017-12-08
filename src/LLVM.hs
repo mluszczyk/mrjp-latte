@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module LLVM where
 
 import Data.List (intercalate)
@@ -86,6 +88,7 @@ showInst (IIcmp cond valType val1 val2 reg) =
   "icmp " ++ showCond cond ++ " " ++ showType valType ++ " " ++
   showValue val1 ++ ", " ++ showValue val2
 
+showCall :: Type -> String -> [(Type, Value)] -> String
 showCall retType ident args =
   "call " ++ showType retType ++ " @" ++ ident ++ " (" ++
   intercalate ", " (map showArgPair args) ++
@@ -94,6 +97,7 @@ showCall retType ident args =
   where showArgPair (type_, value) =
           showType type_ ++ " " ++ showValue value
 
+showArithmOp :: ArithmOp -> String
 showArithmOp OAdd = "add"
 showArithmOp OMul = "mul"
 showArithmOp OSub = "sub"
@@ -123,4 +127,4 @@ showGlobal (Constant size name string) =
    show size ++ " x i8] c\"" ++ escape string ++ "\\00\", align 1"
 
    where
-     escape string = replace "\\" "\\\\" $ replace "\"" "\\\"" string
+     escape s = replace "\\" "\\\\" $ replace "\"" "\\\"" s
