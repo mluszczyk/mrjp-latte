@@ -1,16 +1,18 @@
 module LLVM where
 
 import Data.List (intercalate)
+import Data.String.Utils (replace)
 
 
 data Value = VConst Integer
                | VRegister Register
                | VTrue
                | VFalse
+               | VGetElementPtr Int String
 
 data Register = Register Int | RArgument String
 
-data Type = Ti32 | Tvoid | Ti1 deriving Eq
+data Type = Ti32 | Tvoid | Ti1 | Ti8Ptr deriving Eq
 data Instr = ICall Type String [(Type, Value)] (Maybe Register)
                | IRetVoid
                | IRet Type Value
@@ -31,12 +33,16 @@ data FunctionType = FunctionType [Type] Type deriving Eq
 data Function = Function Type String [(Type, String)] [Instr]
 data ArithmOp = OAdd | OSub | OMul | OSDiv | OSRem
 
+data Constant = Constant Int String String
 
 showValue :: Value -> String
 showValue (VConst num) = show num
 showValue (VRegister reg) = showRegister reg
 showValue VTrue = "1"
 showValue VFalse = "0"
+showValue (VGetElementPtr num string) =
+  "getelementptr inbounds ([" ++ show num ++ " x i8], [" ++
+  show num ++ " x i8]* @" ++ string ++ ", i32 0, i32 0)"
 
 showRegister :: Register -> String
 showRegister (Register num) =  "%unnamed_" ++ show num
@@ -46,6 +52,7 @@ showType :: Type -> String
 showType Ti32 = "i32"
 showType Tvoid = "void"
 showType Ti1 = "i1"
+showType Ti8Ptr = "i8*"
 
 indent :: String -> String
 indent = ("  " ++)
@@ -109,3 +116,11 @@ showFunc (Function retType ident args body) =
           ") {"] ++
           map (indent . showInst) body ++
           ["}"]
+
+showGlobal :: Constant -> String
+showGlobal (Constant size name string) =
+   "@" ++ name ++ " = private unnamed_addr constant [" ++
+   show size ++ " x i8] c\"" ++ escape string ++ "\\00\", align 1"
+
+   where
+     escape string = replace "\\" "\\\\" $ replace "\"" "\\\"" string
