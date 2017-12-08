@@ -1,0 +1,4 @@
+int main() {
+  printTwoInts(1, 2);
+  return 0;
+}

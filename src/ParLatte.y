@@ -47,25 +47,25 @@ import ErrM
   '||' { PT _ (TS _ 32) }
   '}' { PT _ (TS _ 33) }
 
-L_ident  { PT _ (TV $$) }
 L_integ  { PT _ (TI $$) }
 L_quoted { PT _ (TL $$) }
+L_CIdent { PT _ (T_CIdent _) }
 
 
 %%
 
-Ident   :: { Ident }   : L_ident  { Ident $1 }
 Integer :: { Integer } : L_integ  { (read ( $1)) :: Integer }
 String  :: { String }  : L_quoted {  $1 }
+CIdent    :: { CIdent} : L_CIdent { CIdent (mkPosToken $1)}
 
 Program :: { Program }
 Program : ListTopDef { AbsLatte.Program $1 }
 TopDef :: { TopDef }
-TopDef : Type Ident '(' ListArg ')' Block { AbsLatte.FnDef $1 $2 $4 $6 }
+TopDef : Type CIdent '(' ListArg ')' Block { AbsLatte.FnDef $1 $2 $4 $6 }
 ListTopDef :: { [TopDef] }
 ListTopDef : TopDef { (:[]) $1 } | TopDef ListTopDef { (:) $1 $2 }
 Arg :: { Arg }
-Arg : Type Ident { AbsLatte.Arg $1 $2 }
+Arg : Type CIdent { AbsLatte.Arg $1 $2 }
 ListArg :: { [Arg] }
 ListArg : {- empty -} { [] }
         | Arg { (:[]) $1 }
@@ -78,9 +78,9 @@ Stmt :: { Stmt }
 Stmt : ';' { AbsLatte.Empty }
      | Block { AbsLatte.BStmt $1 }
      | Type ListItem ';' { AbsLatte.Decl $1 $2 }
-     | Ident '=' Expr ';' { AbsLatte.Ass $1 $3 }
-     | Ident '++' ';' { AbsLatte.Incr $1 }
-     | Ident '--' ';' { AbsLatte.Decr $1 }
+     | CIdent '=' Expr ';' { AbsLatte.Ass $1 $3 }
+     | CIdent '++' ';' { AbsLatte.Incr $1 }
+     | CIdent '--' ';' { AbsLatte.Decr $1 }
      | 'return' Expr ';' { AbsLatte.Ret $2 }
      | 'return' ';' { AbsLatte.VRet }
      | 'if' '(' Expr ')' Stmt { AbsLatte.Cond $3 $5 }
@@ -88,8 +88,8 @@ Stmt : ';' { AbsLatte.Empty }
      | 'while' '(' Expr ')' Stmt { AbsLatte.While $3 $5 }
      | Expr ';' { AbsLatte.SExp $1 }
 Item :: { Item }
-Item : Ident { AbsLatte.NoInit $1 }
-     | Ident '=' Expr { AbsLatte.Init $1 $3 }
+Item : CIdent { AbsLatte.NoInit $1 }
+     | CIdent '=' Expr { AbsLatte.Init $1 $3 }
 ListItem :: { [Item] }
 ListItem : Item { (:[]) $1 } | Item ',' ListItem { (:) $1 $3 }
 Type :: { Type }
@@ -102,11 +102,11 @@ ListType : {- empty -} { [] }
          | Type { (:[]) $1 }
          | Type ',' ListType { (:) $1 $3 }
 Expr6 :: { Expr }
-Expr6 : Ident { AbsLatte.EVar $1 }
+Expr6 : CIdent { AbsLatte.EVar $1 }
       | Integer { AbsLatte.ELitInt $1 }
       | 'true' { AbsLatte.ELitTrue }
       | 'false' { AbsLatte.ELitFalse }
-      | Ident '(' ListExpr ')' { AbsLatte.EApp $1 $3 }
+      | CIdent '(' ListExpr ')' { AbsLatte.EApp $1 $3 }
       | String { AbsLatte.EString $1 }
       | '(' Expr ')' { $2 }
 Expr5 :: { Expr }

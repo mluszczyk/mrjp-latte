@@ -1,33 +1,33 @@
 module CompilerErr where
 
+data Position = Position { row :: Int
+                         , column :: Int }
+
 data CompilerError = CEUndefinedVariable { ceIdent :: String
-                                         , ceLine :: Int
-                                         , ceColumn :: Int }
+                                         , cePosition :: Position }
                    | CEUndefinedFunction { ceIdent :: String
-                                         , ceLine :: Int
-                                         , ceColumn :: Int }
+                                         , cePosition :: Position }
 
 
 type CompilerErrorM a = Either CompilerError a
 
-raiseCEUndefinedVariable :: String -> Int -> Int -> CompilerErrorM a
-raiseCEUndefinedVariable ident line column = Left CEUndefinedVariable { ceIdent = ident
-                                                                      , ceLine = line
-                                                                      , ceColumn = column }
+raiseCEUndefinedVariable :: String -> Position -> CompilerErrorM a
+raiseCEUndefinedVariable ident position = Left CEUndefinedVariable { ceIdent = ident
+                                                                   , cePosition = position }
 
-raiseCEUndefinedFunction :: String -> Int -> Int -> CompilerErrorM a
-raiseCEUndefinedFunction ident line column = Left CEUndefinedFunction { ceIdent = ident
-                                                                      , ceLine = line
-                                                                      , ceColumn = column }
+raiseCEUndefinedFunction :: String -> Position -> CompilerErrorM a
+raiseCEUndefinedFunction ident position = Left CEUndefinedFunction { ceIdent = ident
+                                                                   , cePosition = position }
 
+
+showPosition :: Position -> String
+showPosition position = "on line " ++ show (row position) ++ " column " ++ show (column position)
 
 errorToString :: CompilerError -> String
 errorToString CEUndefinedVariable { ceIdent = ident
-                                  , ceLine = line
-                                  , ceColumn = column }
- = "undefined variable " ++ ident ++ " on line " ++ show line ++ " column " ++ show column
+                                  , cePosition = position }
+ = "undefined variable " ++ ident ++ " " ++ showPosition position
 
 errorToString CEUndefinedFunction { ceIdent = ident
-                                   , ceLine = line
-                                   , ceColumn = column }
-  = "undefined function " ++ ident ++ " on line " ++ show line ++ " column " ++ show column
+                                   , cePosition = position }
+  = "undefined function " ++ ident ++ " " ++ showPosition position

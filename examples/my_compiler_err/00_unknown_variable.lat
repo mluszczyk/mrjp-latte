@@ -1,0 +1,4 @@
+int main() {
+  printInt(a);
+  return 0;
+}

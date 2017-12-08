@@ -4,11 +4,11 @@ entrypoints Program ;
 
 Program.   Program ::= [TopDef] ;
 
-FnDef.	   TopDef ::= Type Ident "(" [Arg] ")" Block ;
+FnDef.	   TopDef ::= Type CIdent "(" [Arg] ")" Block ;
 
 separator nonempty TopDef "" ;
 
-Arg. 	   Arg ::= Type Ident;
+Arg. 	   Arg ::= Type CIdent;
 
 separator  Arg "," ;
 
@@ -24,17 +24,17 @@ BStmt.     Stmt ::= Block ;
 
 Decl.      Stmt ::= Type [Item] ";" ;
 
-NoInit.    Item ::= Ident ; 
+NoInit.    Item ::= CIdent ;
 
-Init.      Item ::= Ident "=" Expr ;
+Init.      Item ::= CIdent "=" Expr ;
 
 separator nonempty Item "," ;
 
-Ass.       Stmt ::= Ident "=" Expr  ";" ;
+Ass.       Stmt ::= CIdent "=" Expr  ";" ;
 
-Incr.      Stmt ::= Ident "++"  ";" ;
+Incr.      Stmt ::= CIdent "++"  ";" ;
 
-Decr.      Stmt ::= Ident "--"  ";" ;
+Decr.      Stmt ::= CIdent "--"  ";" ;
 
 Ret.       Stmt ::= "return" Expr ";" ;
 
@@ -64,7 +64,7 @@ separator  Type "," ;
 
 -- Expressions ---------------------------------------------
 
-EVar.      Expr6 ::= Ident ;
+EVar.      Expr6 ::= CIdent ;
 
 ELitInt.   Expr6 ::= Integer ;
 
@@ -72,7 +72,7 @@ ELitTrue.  Expr6 ::= "true" ;
 
 ELitFalse. Expr6 ::= "false" ;
 
-EApp.      Expr6 ::= Ident "(" [Expr] ")" ;
+EApp.      Expr6 ::= CIdent "(" [Expr] ")" ;
 
 EString.   Expr6 ::= String ;
 
@@ -126,3 +126,4 @@ comment    "//" ;
 
 comment    "/*" "*/" ;
 
+position token CIdent (letter (letter | digit | '_')*) ;

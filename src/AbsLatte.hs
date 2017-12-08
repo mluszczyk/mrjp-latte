@@ -7,14 +7,15 @@ module AbsLatte where
 
 
 
-newtype Ident = Ident String deriving (Eq, Ord, Show, Read)
+newtype CIdent = CIdent ((Int,Int),String)
+  deriving (Eq, Ord, Show, Read)
 data Program = Program [TopDef]
   deriving (Eq, Ord, Show, Read)
 
-data TopDef = FnDef Type Ident [Arg] Block
+data TopDef = FnDef Type CIdent [Arg] Block
   deriving (Eq, Ord, Show, Read)
 
-data Arg = Arg Type Ident
+data Arg = Arg Type CIdent
   deriving (Eq, Ord, Show, Read)
 
 data Block = Block [Stmt]
@@ -24,9 +25,9 @@ data Stmt
     = Empty
     | BStmt Block
     | Decl Type [Item]
-    | Ass Ident Expr
-    | Incr Ident
-    | Decr Ident
+    | Ass CIdent Expr
+    | Incr CIdent
+    | Decr CIdent
     | Ret Expr
     | VRet
     | Cond Expr Stmt
@@ -35,18 +36,18 @@ data Stmt
     | SExp Expr
   deriving (Eq, Ord, Show, Read)
 
-data Item = NoInit Ident | Init Ident Expr
+data Item = NoInit CIdent | Init CIdent Expr
   deriving (Eq, Ord, Show, Read)
 
 data Type = Int | Str | Bool | Void | Fun Type [Type]
   deriving (Eq, Ord, Show, Read)
 
 data Expr
-    = EVar Ident
+    = EVar CIdent
     | ELitInt Integer
     | ELitTrue
     | ELitFalse
-    | EApp Ident [Expr]
+    | EApp CIdent [Expr]
     | EString String
     | Neg Expr
     | Not Expr

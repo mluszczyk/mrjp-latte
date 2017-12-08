@@ -4,16 +4,13 @@ import qualified Data.Map as M
 import Data.Maybe (fromMaybe)
 import qualified AbsLatte
 import CompilerErr (CompilerErrorM, raiseCEUndefinedVariable, raiseCEUndefinedFunction)
+import qualified CompilerErr
 import Control.Monad (foldM)
 
 import qualified LLVM
 
 latteMain = [ "target triple = \"x86_64-apple-macosx10.13.0\""
             , "@.str = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1"
-            , "define i32 @main() #0 {"
-            , "  call i32 @lat_main()"
-            , "  ret i32 0"
-            , "}"
             , ""
             , "define void @printInt(i32 %num) #1 {"
             , "  %1 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str, i32 0, i32 0), i32 %num)"
@@ -26,6 +23,10 @@ newtype ValueMap = ValueMap (M.Map String LLVM.Register)
 newtype Signatures = Signatures (M.Map String LLVM.FunctionType)
 newtype NextRegister = NextRegister Int
 
+getPosition :: AbsLatte.CIdent -> CompilerErr.Position
+getPosition (AbsLatte.CIdent ((row, col), _)) = CompilerErr.Position { CompilerErr.row = row
+                                                   , CompilerErr.column = col }
+
 initNextRegister :: NextRegister
 initNextRegister = NextRegister 0
 
@@ -33,9 +34,9 @@ setVariable :: String -> LLVM.Register -> ValueMap -> ValueMap
 setVariable name value (ValueMap valueMap) =
     ValueMap (M.insert name value valueMap)
 
-lookupVariable :: String -> ValueMap -> CompilerErrorM LLVM.Register
-lookupVariable name (ValueMap valueMap) =
-    maybe (raiseCEUndefinedVariable name 0 0) return (M.lookup name valueMap)
+lookupVariable :: String -> ValueMap -> CompilerErr.Position -> CompilerErrorM LLVM.Register
+lookupVariable name (ValueMap valueMap) position =
+    maybe (raiseCEUndefinedVariable name position) return (M.lookup name valueMap)
 
 initValueMap :: ValueMap
 initValueMap = ValueMap M.empty
@@ -114,7 +115,7 @@ compileStmt signatures (AbsLatte.SExp expr) valueMap nextReg =
       return (stmts, valueMap, newNextReg)
 
 compileStmt signatures (AbsLatte.Ass ident expr) valueMap nextReg =
-   do ptr <- lookupVariable (compileVariableIdent ident) valueMap
+   do ptr <- lookupVariable (compileVariableIdent ident) valueMap (getPosition ident)
       (stmts, nextReg1) <- compileAssign signatures expr valueMap nextReg ptr
       return (stmts, valueMap, nextReg1)
 
@@ -166,7 +167,7 @@ compileStmt signatures (AbsLatte.BStmt block) valueMap0 nextReg0 =
 compileExpr :: Signatures -> AbsLatte.Expr -> ValueMap -> NextRegister -> CompilerErrorM (LLVM.Value, [LLVM.Instr], NextRegister)
 compileExpr signatures (AbsLatte.EApp ident args) valueMap nextReg =
    do (sLines, argVals, nextReg1) <- foldM go ([], [], nextReg) args
-      retType <- getReturnedType (compileFuncIdent ident) signatures
+      retType <- getReturnedType (compileFuncIdent ident) signatures (getPosition ident)
       if retType == LLVM.Tvoid then
         return (LLVM.VConst 0, sLines ++ [LLVM.ICall retType (compileFuncIdent ident) [(LLVM.Ti32, value) | value <- argVals] Nothing] , nextReg1)
       else do
@@ -182,7 +183,7 @@ compileExpr _ (AbsLatte.ELitInt int) valueMap nextReg =
     return (LLVM.VConst int, [], nextReg)
 
 compileExpr _ (AbsLatte.EVar ident) valueMap nextReg =
-  do ptr <- lookupVariable (compileVariableIdent ident) valueMap
+  do ptr <- lookupVariable (compileVariableIdent ident) valueMap (getPosition ident)
      let (reg, nextReg1) = getNextRegister nextReg
      return (LLVM.VRegister reg, [LLVM.ILoad LLVM.Ti32 LLVM.Ti32 ptr reg], nextReg1)
 
@@ -227,14 +228,12 @@ compileMulOperator AbsLatte.Div = LLVM.OSDiv
 compileMulOperator AbsLatte.Mod = LLVM.OSRem
 compileMulOperator AbsLatte.Times = LLVM.OMul
 
-compileFuncIdent (AbsLatte.Ident str) | str == "printInt" = "printInt"
-                                      | otherwise = "lat_" ++ str
+compileFuncIdent (AbsLatte.CIdent (_, str)) = str
+compileVariableIdent (AbsLatte.CIdent (_, str)) = str
 
-compileVariableIdent (AbsLatte.Ident str) = str
-
-getReturnedType :: String -> Signatures -> CompilerErrorM LLVM.Type
-getReturnedType string (Signatures signatures) =
-  maybe (raiseCEUndefinedFunction string 0 0)
+getReturnedType :: String -> Signatures -> CompilerErr.Position -> CompilerErrorM LLVM.Type
+getReturnedType string (Signatures signatures) position =
+  maybe (raiseCEUndefinedFunction string position)
   (\ (LLVM.FunctionType _ retType) -> return retType )
   (M.lookup string signatures)
 
