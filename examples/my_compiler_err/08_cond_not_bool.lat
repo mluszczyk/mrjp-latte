@@ -1,0 +1,6 @@
+int main() {
+  if (5) {
+    printInt(2);
+  }
+  return 0;
+}

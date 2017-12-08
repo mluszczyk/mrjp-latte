@@ -133,12 +133,13 @@ compileFlowBlock signatures stmt valueMap0 nextReg0 nextBlock =
      return (stmts ++ [LLVM.IBr nextBlock], nextReg1)
 
 compileAssign signatures expr valueMap nextReg ptr =
-  do (value, stmts, newNextReg) <- compileExpr signatures expr valueMap nextReg
-     return (stmts ++ [LLVM.IStore LLVM.Ti32 value LLVM.Ti32 ptr], newNextReg)
+  do (value, type_, stmts, newNextReg) <- compileExpr signatures expr valueMap nextReg
+     -- TODO: check whether type_ is ptr type
+     return (stmts ++ [LLVM.IStore type_ value type_ ptr], newNextReg)
 
 compileStmt :: Signatures -> AbsLatte.Stmt -> ValueMap -> NextRegister -> CompilerErrorM ([LLVM.Instr], ValueMap, NextRegister)
 compileStmt signatures (AbsLatte.SExp expr) valueMap nextReg =
-   do (_, stmts, newNextReg) <- compileExpr signatures expr valueMap nextReg
+   do (_, _, stmts, newNextReg) <- compileExpr signatures expr valueMap nextReg
       return (stmts, valueMap, newNextReg)
 
 compileStmt signatures (AbsLatte.Ass ident expr) valueMap nextReg =
@@ -154,14 +155,15 @@ compileStmt signatures (AbsLatte.Decl type_ [AbsLatte.Init ident expr]) valueMap
      return (instr ++ stmts, valueMap1, nextReg2)
 
 compileStmt signatures (AbsLatte.Ret expr) valueMap nextReg =
-  do (value, stmts, newNextReg) <- compileExpr signatures expr valueMap nextReg
-     return (stmts ++ [LLVM.IRet LLVM.Ti32 value], valueMap, newNextReg)
+  do (value, type_, stmts, newNextReg) <- compileExpr signatures expr valueMap nextReg
+     return (stmts ++ [LLVM.IRet type_ value], valueMap, newNextReg)
 
 compileStmt signatures AbsLatte.VRet valueMap nextReg =
   return ([LLVM.IRetVoid], valueMap, nextReg)
 
 compileStmt signatures (AbsLatte.Cond expr stmt1) valueMap0 nextReg0 =
-  do (cond, condStmts, nextReg1) <- compileExpr signatures expr valueMap0 nextReg0
+  do (cond, type_, condStmts, nextReg1) <- compileExpr signatures expr valueMap0 nextReg0
+     checkType type_ LLVM.Ti1 "if condition"
      let (ifTrueBlock, nextReg2) = getNextLabel nextReg1
      let (contBlock, nextReg3) = getNextLabel nextReg2
      let branch = LLVM.IBrCond LLVM.Ti1 cond ifTrueBlock contBlock
@@ -169,7 +171,8 @@ compileStmt signatures (AbsLatte.Cond expr stmt1) valueMap0 nextReg0 =
      return (condStmts ++ [branch, LLVM.ILabel ifTrueBlock] ++ ifBlockStmts ++ [LLVM.ILabel contBlock], valueMap0, nextReg4)
 
 compileStmt signatures (AbsLatte.CondElse expr stmt1 stmt2) valueMap0 nextReg0 =
-  do (cond, condStmts, nextReg1) <- compileExpr signatures expr valueMap0 nextReg0
+  do (cond, type_, condStmts, nextReg1) <- compileExpr signatures expr valueMap0 nextReg0
+     checkType type_ LLVM.Ti1 "if-else condition"
      let (ifTrueBlock, nextReg2) = getNextLabel nextReg1
      let (ifElseBlock, nextReg3) = getNextLabel nextReg2
      let (contBlock, nextReg4) = getNextLabel nextReg3
@@ -183,7 +186,8 @@ compileStmt signatures (AbsLatte.While expr stmt) valueMap0 nextReg0 =
      let (bodyBlock, nextReg2) = getNextLabel nextReg1
      let (contBlock, nextReg3) = getNextLabel nextReg2
      (bodyBlockInstrs, nextReg4) <- compileFlowBlock signatures stmt valueMap0 nextReg3 condBlock
-     (cond, condInstrs, nextReg5) <- compileExpr signatures expr valueMap0 nextReg4
+     (cond, type_, condInstrs, nextReg5) <- compileExpr signatures expr valueMap0 nextReg4
+     checkType type_ LLVM.Ti1 "while loop condition"
      let condBlockInstrs = condInstrs ++ [LLVM.IBrCond LLVM.Ti1 cond bodyBlock contBlock]
      return ([LLVM.IBr condBlock, LLVM.ILabel bodyBlock] ++ bodyBlockInstrs ++ [LLVM.ILabel condBlock]  ++ condBlockInstrs ++ [LLVM.ILabel contBlock], valueMap0, nextReg5)
 
@@ -191,28 +195,29 @@ compileStmt signatures (AbsLatte.BStmt block) valueMap0 nextReg0 =
   do (instrs, nextReg1) <- compileBlock signatures block valueMap0 nextReg0
      return (instrs, valueMap0, nextReg1)
 
-compileExpr :: Signatures -> AbsLatte.Expr -> ValueMap -> NextRegister -> CompilerErrorM (LLVM.Value, [LLVM.Instr], NextRegister)
+compileExpr :: Signatures -> AbsLatte.Expr -> ValueMap -> NextRegister -> CompilerErrorM (LLVM.Value, LLVM.Type, [LLVM.Instr], NextRegister)
 compileExpr signatures (AbsLatte.EApp ident args) valueMap nextReg =
    do (sLines, argVals, nextReg1) <- foldM go ([], [], nextReg) args
       retType <- getReturnedType (compileFuncIdent ident) signatures (getPosition ident)
       if retType == LLVM.Tvoid then
-        return (LLVM.VConst 0, sLines ++ [LLVM.ICall retType (compileFuncIdent ident) [(LLVM.Ti32, value) | value <- argVals] Nothing] , nextReg1)
+        return (LLVM.VConst 0, retType, sLines ++ [LLVM.ICall retType (compileFuncIdent ident) [(LLVM.Ti32, value) | value <- argVals] Nothing] , nextReg1)
       else do
         let (register, nextReg2) = getNextRegister nextReg1
-        return (LLVM.VRegister register, sLines ++ [LLVM.ICall retType (compileFuncIdent ident) [(LLVM.Ti32, value) | value <- argVals] (Just register)], nextReg2)
+        return (LLVM.VRegister register, retType, sLines ++ [LLVM.ICall retType (compileFuncIdent ident) [(LLVM.Ti32, value) | value <- argVals] (Just register)], nextReg2)
 
    where
      go (sLines, argValues, nextReg1) argExpr =
-           do (val, newLines, nextReg2) <- compileExpr signatures argExpr valueMap nextReg1
+           do (val, type_, newLines, nextReg2) <- compileExpr signatures argExpr valueMap nextReg1
+              -- todo: check arg type
               return (sLines ++ newLines, argValues ++ [val], nextReg2)
 
 compileExpr _ (AbsLatte.ELitInt int) valueMap nextReg =
-    return (LLVM.VConst int, [], nextReg)
+    return (LLVM.VConst int, LLVM.Ti32, [], nextReg)
 
 compileExpr _ (AbsLatte.EVar ident) valueMap nextReg =
   do ptr <- lookupVariable (compileVariableIdent ident) valueMap (getPosition ident)
      let (reg, nextReg1) = getNextRegister nextReg
-     return (LLVM.VRegister reg, [LLVM.ILoad LLVM.Ti32 LLVM.Ti32 ptr reg], nextReg1)
+     return (LLVM.VRegister reg, LLVM.Ti32, [LLVM.ILoad LLVM.Ti32 LLVM.Ti32 ptr reg], nextReg1)
 
 compileExpr signatures (AbsLatte.EAdd exp1 addOp exp2) valueMap nextReg0 =
   compileArithm signatures exp1 (compileAddOperator addOp) exp2 valueMap nextReg0
@@ -221,16 +226,18 @@ compileExpr signatures (AbsLatte.EMul exp1 mulOp exp2) valueMap nextReg0 =
   compileArithm signatures exp1 (compileMulOperator mulOp) exp2 valueMap nextReg0
 
 compileExpr signatures AbsLatte.ELitTrue _ nextReg =
-  return (LLVM.VTrue, [], nextReg)
+  return (LLVM.VTrue, LLVM.Ti1, [], nextReg)
 
 compileExpr signatures AbsLatte.ELitFalse _ nextReg =
-  return (LLVM.VFalse, [], nextReg)
+  return (LLVM.VFalse, LLVM.Ti1, [], nextReg)
 
 compileExpr signatures (AbsLatte.ERel exp1 relOp exp2) valueMap nextReg0 =
-  do (val1, instr1, nextReg1) <- compileExpr signatures exp1 valueMap nextReg0
-     (val2, instr2, nextReg2) <- compileExpr signatures exp2 valueMap nextReg1
+  do (val1, type1, instr1, nextReg1) <- compileExpr signatures exp1 valueMap nextReg0
+     (val2, type2, instr2, nextReg2) <- compileExpr signatures exp2 valueMap nextReg1
+     checkType type1 LLVM.Ti32 "left operand to relational operator"
+     checkType type2 LLVM.Ti32 "right operand to relational operator"
      let (reg, nextReg3) = getNextRegister nextReg2
-     return (LLVM.VRegister reg, instr1 ++ instr2 ++ [LLVM.IIcmp (compileRelOp relOp) LLVM.Ti32 val1 val2 reg], nextReg3)
+     return (LLVM.VRegister reg, LLVM.Ti1, instr1 ++ instr2 ++ [LLVM.IIcmp (compileRelOp relOp) LLVM.Ti32 val1 val2 reg], nextReg3)
 
 compileRelOp AbsLatte.GE  = LLVM.RelOpSGE
 compileRelOp AbsLatte.GTH = LLVM.RelOpSGT
@@ -240,11 +247,16 @@ compileRelOp AbsLatte.EQU = LLVM.RelOpEQ
 compileRelOp AbsLatte.NE = LLVM.RelOpNE
 
 compileArithm signatures exp1 op exp2 valueMap nextReg0 =
-  do (val1, instr1, nextReg1) <- compileExpr signatures exp1 valueMap nextReg0
-     (val2, instr2, nextReg2) <- compileExpr signatures exp2 valueMap nextReg1
+  do (val1, type1, instr1, nextReg1) <- compileExpr signatures exp1 valueMap nextReg0
+     (val2, type2, instr2, nextReg2) <- compileExpr signatures exp2 valueMap nextReg1
+     checkType type1 LLVM.Ti32 "arithmetic operation"
+     checkType type2 LLVM.Ti32 "arithmetic operation"
      let (reg, nextReg3) = getNextRegister nextReg2
-     return (LLVM.VRegister reg, instr1 ++ instr2 ++ [LLVM.IArithm LLVM.Ti32 val1 val2 op reg], nextReg3)
+     return (LLVM.VRegister reg, LLVM.Ti32, instr1 ++ instr2 ++ [LLVM.IArithm LLVM.Ti32 val1 val2 op reg], nextReg3)
 
+checkType :: LLVM.Type -> LLVM.Type -> String -> CompilerErrorM ()
+checkType type1 type2 description | type1 == type2 = return ()
+                                  | otherwise = CompilerErr.raiseCETypeError description
 
 compileAddOperator :: AbsLatte.AddOp -> LLVM.ArithmOp
 compileAddOperator AbsLatte.Plus = LLVM.OAdd

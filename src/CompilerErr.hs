@@ -12,6 +12,7 @@ data CompilerError = CEUndefinedVariable { ceIdent :: String
                                                      , cePosition :: Position }
                    | CEMissingMainFunction
                    | CEIncorrectMainFunctionType
+                   | CETypeError String
 
 
 type CompilerErrorM a = Either CompilerError a
@@ -34,6 +35,9 @@ raiseCEMissingMainFunction = Left CEMissingMainFunction
 raiseCEIncorrectMainFunctionType :: CompilerErrorM a
 raiseCEIncorrectMainFunctionType = Left CEIncorrectMainFunctionType
 
+raiseCETypeError :: String -> CompilerErrorM a
+raiseCETypeError string = Left $ CETypeError string
+
 showPosition :: Position -> String
 showPosition position = "on line " ++ show (row position) ++ " column " ++ show (column position)
 
@@ -52,3 +56,4 @@ errorToString CEDuplicatedFunctionDeclaration { ceIdent = ident
 
 errorToString CEMissingMainFunction = "main function not declared"
 errorToString CEIncorrectMainFunctionType = "incorrect type of main function; should return int and take no arguments"
+errorToString (CETypeError description) = "type error in " ++ description

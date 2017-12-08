@@ -1,0 +1,4 @@
+int main() {
+  printInt(5 * true);
+  return 0;
+}
