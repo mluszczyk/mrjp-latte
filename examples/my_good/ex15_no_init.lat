@@ -1,0 +1,8 @@
+int main() {
+  int num;
+  printInt(num);
+  num = 6;
+  printInt(num);
+
+  return 0;
+}

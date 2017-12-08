@@ -116,9 +116,12 @@ compileFunc signatures (AbsLatte.FnDef type_ ident args block) =
           ([alloc, LLVM.IStore llvmType (LLVM.VRegister $ LLVM.RArgument (compileVariableIdent ident)) llvmType ptr], valueMap1, nextReg1)
 
      nullRet | lType == LLVM.Tvoid = LLVM.IRetVoid
-             | lType == LLVM.Ti32 = LLVM.IRet lType (LLVM.VConst 0)
-             | lType == LLVM.Ti1 = LLVM.IRet lType LLVM.VFalse
+             | otherwise = LLVM.IRet lType (defaultValue lType)
      lType = compileType type_
+
+defaultValue :: LLVM.Type -> LLVM.Value
+defaultValue LLVM.Ti1  = LLVM.VFalse
+defaultValue LLVM.Ti32 = LLVM.VConst 0
 
 compileBlock :: Signatures -> AbsLatte.Block -> ValueMap -> NextRegister -> CompilerErrorM ([LLVM.Instr], NextRegister)
 compileBlock signatures (AbsLatte.Block stmts) valueMap0 nextRegister0 =
@@ -148,13 +151,24 @@ compileStmt signatures (AbsLatte.Ass ident expr) valueMap nextReg =
       (stmts, nextReg1) <- compileAssign signatures expr valueMap nextReg type_ ptr
       return (stmts, valueMap, nextReg1)
 
-compileStmt signatures (AbsLatte.Decl type_ [AbsLatte.Init ident expr]) valueMap nextReg =
-  do let (ptr, nextReg1) = getNextRegister nextReg
-     let llvmType = compileType type_
-     let instr = [LLVM.IAlloca llvmType ptr]
-     (stmts, nextReg2) <- compileAssign signatures expr valueMap nextReg1 llvmType ptr
-     let valueMap1 = setVariable (compileVariableIdent ident) llvmType ptr valueMap
-     return (instr ++ stmts, valueMap1, nextReg2)
+compileStmt signatures (AbsLatte.Decl type_ decls) valueMap nextReg =
+  do checkNotVoid type_ "void variable declarations illegal"
+     foldM go ([], valueMap, nextReg) decls
+
+  where
+     llvmType = compileType type_
+     go (stmts0, valueMap1, nextReg1) (AbsLatte.Init ident expr) =
+          do let (ptr, nextReg2) = getNextRegister nextReg1
+             let instr = [LLVM.IAlloca llvmType ptr]
+             (stmts, nextReg3) <- compileAssign signatures expr valueMap nextReg2 llvmType ptr
+             let valueMap2 = setVariable (compileVariableIdent ident) llvmType ptr valueMap1
+             return (stmts0 ++ instr ++ stmts, valueMap2, nextReg3)
+     go (stmts0, valueMap1, nextReg1) (AbsLatte.NoInit ident) =
+          do let (ptr, nextReg2) = getNextRegister nextReg1
+             let instr = [LLVM.IAlloca llvmType ptr]
+             let stmts = [LLVM.IStore llvmType (defaultValue llvmType) llvmType ptr]
+             let valueMap2 = setVariable (compileVariableIdent ident) llvmType ptr valueMap1
+             return (stmts0 ++ instr ++ stmts, valueMap2, nextReg2)
 
 compileStmt signatures (AbsLatte.Ret expr) valueMap nextReg =
   do (value, type_, stmts, newNextReg) <- compileExpr signatures expr valueMap nextReg
@@ -261,6 +275,10 @@ compileArithm signatures exp1 op exp2 valueMap nextReg0 =
 checkType :: LLVM.Type -> LLVM.Type -> String -> CompilerErrorM ()
 checkType type1 type2 description | type1 == type2 = return ()
                                   | otherwise = CompilerErr.raiseCETypeError description
+
+checkNotVoid :: AbsLatte.Type -> String -> CompilerErrorM ()
+checkNotVoid type1 description | type1 == AbsLatte.Void = CompilerErr.raiseCETypeError description
+                               | otherwise = return ()
 
 compileAddOperator :: AbsLatte.AddOp -> LLVM.ArithmOp
 compileAddOperator AbsLatte.Plus = LLVM.OAdd
