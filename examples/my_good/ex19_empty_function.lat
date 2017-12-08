@@ -1,0 +1,8 @@
+void blah() {
+}
+
+int main() {
+  blah();
+  printInt(123);
+  return 0;
+}

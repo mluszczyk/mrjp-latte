@@ -1,0 +1,5 @@
+int main() {
+  if (true);
+  printInt(125);
+  return 0;
+}

@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wall #-}
+
 module CompileLatte where
 
 import qualified Data.Map as M
@@ -249,6 +251,9 @@ compileStmt signatures (AbsLatte.While expr stmt) valueMap0 nextReg0 constCounte
 compileStmt signatures (AbsLatte.BStmt block) valueMap0 nextReg0 constCounter0 =
   do (instrs, globals, nextReg1, constCounter1) <- compileBlock signatures block valueMap0 nextReg0 constCounter0
      return (instrs, globals, valueMap0, nextReg1, constCounter1)
+
+compileStmt _ AbsLatte.Empty valueMap0 nextReg0 constCounter0 =
+  return ([], [], valueMap0, nextReg0, constCounter0)
 
 compileExpr :: Signatures -> AbsLatte.Expr -> ValueMap -> NextRegister -> ConstCounter -> CompilerErrorM (LLVM.Value, LLVM.Type, [LLVM.Instr], [LLVM.Constant], NextRegister, ConstCounter)
 compileExpr signatures (AbsLatte.EApp ident args) valueMap nextReg constCounter =
