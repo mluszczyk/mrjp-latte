@@ -94,6 +94,9 @@ compileLatte (AbsLatte.Program topDefs) =
 compileFunc :: Signatures -> AbsLatte.TopDef -> CompilerErrorM LLVM.Function
 compileFunc signatures (AbsLatte.FnDef type_ ident args block) =
    do
+      mapM_ (\ (num, AbsLatte.Arg argType _) ->
+            checkNotVoid argType "function argument must not be void")
+            (zip [1..] args)
       let (argInstrs, valueMap2, nextReg2) =
             foldl (\ (instrs, valueMap0, nextReg0) arg ->
                             let (newInstrs, valueMap1, nextReg1) = saveArgument arg valueMap0 nextReg0 in

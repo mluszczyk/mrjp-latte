@@ -1,0 +1,7 @@
+int function_arg(void must_not_be_void) {
+  return 4;
+}
+
+int main() {
+  return 0;
+}
