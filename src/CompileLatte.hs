@@ -22,7 +22,26 @@ latteMain = [ "target triple = \"x86_64-apple-macosx10.13.0\""
             , "}"
             , "declare i32 @printf(i8*, ...)"
             , "declare i32 @puts(i8*)"
-            ]
+            , "define i8* @concat(i8*, i8*) local_unnamed_addr #0 {"
+              ,   "%3 = tail call i64 @strlen(i8* %0)"
+              ,    "%4 = tail call i64 @strlen(i8* %1)"
+              ,    "%5 = add i64 %4, %3"
+              ,    "%6 = shl i64 %5, 32"
+              ,    "%7 = add i64 %6, 4294967296"
+              ,    "%8 = ashr exact i64 %7, 29"
+              ,    "%9 = tail call i8* @malloc(i64 %8) #6"
+              ,    "%10 = tail call i64 @llvm.objectsize.i64.p0i8(i8* %9, i1 false, i1 true)"
+              ,    "%11 = tail call i8* @__strcpy_chk(i8* %9, i8* %0, i64 %10) #7"
+              ,    "%12 = tail call i8* @__strcat_chk(i8* %9, i8* %1, i64 %10) #7"
+              ,    "ret i8* %9"
+              ,  "}"
+              ,  "declare i64 @strlen(i8* nocapture) local_unnamed_addr #1"
+              ,  "declare noalias i8* @malloc(i64) local_unnamed_addr #2"
+              ,  "declare i8* @__strcpy_chk(i8*, i8*, i64) local_unnamed_addr #3"
+              ,  "declare i64 @llvm.objectsize.i64.p0i8(i8*, i1, i1) #4"
+              ,  "declare i8* @__strcat_chk(i8*, i8*, i64) local_unnamed_addr #3"
+              ]
+
 
 mainFunctionName = "main"
 mainFunctionType = LLVM.FunctionType [] LLVM.Ti32
@@ -98,7 +117,7 @@ compileLatte (AbsLatte.Program topDefs) =
       checkMainSignature signatures
       (funcLines, globalsLines, _) <- foldM (go signatures) ([], [], initConstCounter) topDefs
       let allLines = concatMap LLVM.showFunc funcLines
-      return $ unlines $ latteMain ++ (map LLVM.showGlobal globalsLines) ++ allLines
+      return $ unlines $ latteMain ++ map LLVM.showGlobal globalsLines ++ allLines
 
    where go signatures (functions, constants, constCounter0) topDef =
            do (newFunc, newConstants, constCounter1) <- compileFunc signatures topDef constCounter0
@@ -263,23 +282,45 @@ compileExpr signatures (AbsLatte.EAdd exp1 addOp exp2) valueMap nextReg0 constCo
 compileExpr signatures (AbsLatte.EMul exp1 mulOp exp2) valueMap nextReg0 constCounter =
   compileArithm signatures exp1 (compileMulOperator mulOp) exp2 valueMap nextReg0 constCounter
 
+compileExpr signatures (AbsLatte.ERel exp1 relOp exp2) valueMap nextReg0 constCounter =
+  compileArithm signatures exp1 (compileRelOp relOp) exp2 valueMap nextReg0 constCounter
+
 compileExpr signatures AbsLatte.ELitTrue _ nextReg constCounter =
   return (LLVM.VTrue, LLVM.Ti1, [], [], nextReg, constCounter)
 
 compileExpr signatures AbsLatte.ELitFalse _ nextReg constCounter =
   return (LLVM.VFalse, LLVM.Ti1, [], [], nextReg, constCounter)
 
-compileExpr signatures (AbsLatte.ERel exp1 relOp exp2) valueMap nextReg0 constCounter0 =
-  do (val1, type1, instr1, globals1, nextReg1, constCounter1) <- compileExpr signatures exp1 valueMap nextReg0 constCounter0
-     (val2, type2, instr2, globals2, nextReg2, constCounter2) <- compileExpr signatures exp2 valueMap nextReg1 constCounter1
-     checkType type1 LLVM.Ti32 "left operand to relational operator"
-     checkType type2 LLVM.Ti32 "right operand to relational operator"
-     let (reg, nextReg3) = getNextRegister nextReg2
-     return (LLVM.VRegister reg, LLVM.Ti1, instr1 ++ instr2 ++ [LLVM.IIcmp (compileRelOp relOp) LLVM.Ti32 val1 val2 reg], globals1 ++ globals2, nextReg3, constCounter2)
-
 compileExpr signatures (AbsLatte.EString string) valueMap nextReg0 constCounter =
   do let (constName, constCounter1) = getNextConst constCounter
      return (LLVM.VGetElementPtr (length string + 1) constName, LLVM.Ti8Ptr, [], [LLVM.Constant (length string + 1) constName string], nextReg0, constCounter1)
+
+data Operation = Add | Sub | Mul | Div | Mod
+                 | LessThan | LessEqual
+                 | GreaterThan | GreaterEqual | Equal | NotEqual
+                 deriving Eq
+
+operations :: [ (LLVM.Type, Operation, LLVM.Type, LLVM.Type, LLVM.Value -> LLVM.Value -> LLVM.Register -> LLVM.Instr)]
+operations = [ (LLVM.Ti32, op, LLVM.Ti32, LLVM.Ti32,
+                  \ v1 v2 reg -> LLVM.IArithm LLVM.Ti32 v1 v2 llvmOp reg
+                  )   | (op, llvmOp) <- [ (Add, LLVM.OAdd), (Sub, LLVM.OSub)
+                                       , (Mul, LLVM.OMul), (Div, LLVM.OSDiv),
+                                         (Mod, LLVM.OSRem)
+                                   ]] ++
+              [ (LLVM.Ti8Ptr, Add, LLVM.Ti8Ptr, LLVM.Ti8Ptr,
+                  \ v1 v2 reg -> LLVM.ICall LLVM.Ti8Ptr "concat"
+                           [(LLVM.Ti8Ptr, v1), (LLVM.Ti8Ptr, v2)]
+                           (Just reg)) ] ++
+              [ (LLVM.Ti32, op, LLVM.Ti32, LLVM.Ti1,
+                  LLVM.IIcmp relOp LLVM.Ti32)
+                  | (op, relOp) <- [ (LessThan, LLVM.RelOpSLT)
+                                   , (GreaterThan, LLVM.RelOpSGT)
+                                   , (LessEqual, LLVM.RelOpSLE)
+                                   , (GreaterEqual, LLVM.RelOpSGE)
+                                   , (Equal, LLVM.RelOpEQ)
+                                   , (NotEqual, LLVM.RelOpNE)
+                                   ]
+              ]
 
 newtype ConstCounter = ConstCounter Int
 initConstCounter :: ConstCounter
@@ -287,20 +328,25 @@ initConstCounter = ConstCounter 0
 getNextConst :: ConstCounter -> (String, ConstCounter)
 getNextConst (ConstCounter num) = ("string" ++ show num, ConstCounter (num + 1))
 
-compileRelOp AbsLatte.GE  = LLVM.RelOpSGE
-compileRelOp AbsLatte.GTH = LLVM.RelOpSGT
-compileRelOp AbsLatte.LE  = LLVM.RelOpSLE
-compileRelOp AbsLatte.LTH = LLVM.RelOpSLT
-compileRelOp AbsLatte.EQU = LLVM.RelOpEQ
-compileRelOp AbsLatte.NE = LLVM.RelOpNE
+compileRelOp AbsLatte.GE  = GreaterEqual
+compileRelOp AbsLatte.GTH = GreaterThan
+compileRelOp AbsLatte.LE  = LessEqual
+compileRelOp AbsLatte.LTH = LessThan
+compileRelOp AbsLatte.EQU = Equal
+compileRelOp AbsLatte.NE = NotEqual
 
 compileArithm signatures exp1 op exp2 valueMap nextReg0 constCounter0 =
   do (val1, type1, instr1, globals1, nextReg1, constCounter1) <- compileExpr signatures exp1 valueMap nextReg0 constCounter0
      (val2, type2, instr2, globals2, nextReg2, constCounter2) <- compileExpr signatures exp2 valueMap nextReg1 constCounter1
-     checkType type1 LLVM.Ti32 "arithmetic operation"
-     checkType type2 LLVM.Ti32 "arithmetic operation"
+     (retType, instr) <- getInstr type1 type2
      let (reg, nextReg3) = getNextRegister nextReg2
-     return (LLVM.VRegister reg, LLVM.Ti32, instr1 ++ instr2 ++ [LLVM.IArithm LLVM.Ti32 val1 val2 op reg], globals1 ++ globals2, nextReg3, constCounter2)
+     return (LLVM.VRegister reg, retType, instr1 ++ instr2 ++ [instr val1 val2 reg], globals1 ++ globals2, nextReg3, constCounter2)
+
+  where
+    getInstr type1 type2 =
+      case filter (\ (a, b, c, d, e) -> (a, b, c) == (type1, op, type2)) operations of
+        [] -> CompilerErr.raiseCETypeError "incorrect binary operation"
+        (_, _, _, retType, instr) : _ -> return (retType, instr)
 
 checkType :: LLVM.Type -> LLVM.Type -> String -> CompilerErrorM ()
 checkType type1 type2 description | type1 == type2 = return ()
@@ -310,14 +356,14 @@ checkNotVoid :: AbsLatte.Type -> String -> CompilerErrorM ()
 checkNotVoid type1 description | type1 == AbsLatte.Void = CompilerErr.raiseCETypeError description
                                | otherwise = return ()
 
-compileAddOperator :: AbsLatte.AddOp -> LLVM.ArithmOp
-compileAddOperator AbsLatte.Plus = LLVM.OAdd
-compileAddOperator AbsLatte.Minus = LLVM.OSub
+compileAddOperator :: AbsLatte.AddOp -> Operation
+compileAddOperator AbsLatte.Plus = Add
+compileAddOperator AbsLatte.Minus = Sub
 
-compileMulOperator :: AbsLatte.MulOp -> LLVM.ArithmOp
-compileMulOperator AbsLatte.Div = LLVM.OSDiv
-compileMulOperator AbsLatte.Mod = LLVM.OSRem
-compileMulOperator AbsLatte.Times = LLVM.OMul
+compileMulOperator :: AbsLatte.MulOp -> Operation
+compileMulOperator AbsLatte.Div = Div
+compileMulOperator AbsLatte.Mod = Mod
+compileMulOperator AbsLatte.Times = Mul
 
 compileFuncIdent (AbsLatte.CIdent (_, str)) = str
 compileVariableIdent (AbsLatte.CIdent (_, str)) = str
