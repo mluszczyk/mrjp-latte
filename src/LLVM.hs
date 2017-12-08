@@ -27,7 +27,7 @@ data Cond = RelOpEQ | RelOpNE | RelOpSGT | RelOpSGE | RelOpSLT | RelOpSLE
 
 newtype Label = Label Int
 
-data FunctionType = FunctionType [Type] Type
+data FunctionType = FunctionType [Type] Type deriving Eq
 data Function = Function Type String [(Type, String)] [Instr]
 data ArithmOp = OAdd | OSub | OMul | OSDiv | OSRem
 

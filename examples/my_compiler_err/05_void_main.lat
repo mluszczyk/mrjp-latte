@@ -1,0 +1,4 @@
+void main() {
+  int main_should_return_int = 3;
+  return 0;
+}

@@ -1,0 +1,11 @@
+void printInt() {
+  return;
+}
+
+void printInt() {
+  return;
+}
+
+int main() {
+  return 0;
+}

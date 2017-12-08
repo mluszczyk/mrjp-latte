@@ -1,0 +1,3 @@
+int main(int main_takes_no_args) {
+  return 0;
+}

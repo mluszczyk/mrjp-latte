@@ -19,6 +19,9 @@ latteMain = [ "target triple = \"x86_64-apple-macosx10.13.0\""
             , "declare i32 @printf(i8*, ...) #2"
             ]
 
+mainFunctionName = "main"
+mainFunctionType = LLVM.FunctionType [] LLVM.Ti32
+
 newtype ValueMap = ValueMap (M.Map String LLVM.Register)
 newtype Signatures = Signatures (M.Map String LLVM.FunctionType)
 newtype NextRegister = NextRegister Int
@@ -41,6 +44,28 @@ lookupVariable name (ValueMap valueMap) position =
 initValueMap :: ValueMap
 initValueMap = ValueMap M.empty
 
+checkDuplicateIdents :: [(String, CompilerErr.Position)] -> Maybe (String, CompilerErr.Position)
+checkDuplicateIdents idents = case
+  M.toList (M.filter (\l -> length l >= 2) (M.fromListWith (++) (map (\ (a, b) -> (a, [b])) idents))) of
+    [] -> Nothing
+    (str, pos : _) : _ -> Just (str, pos)
+
+checkDuplicateFnDefs :: [AbsLatte.TopDef] -> CompilerErrorM ()
+checkDuplicateFnDefs topDefs = case checkDuplicateIdents positions of
+    Nothing -> return ()
+    Just (str, pos) -> CompilerErr.raiseCEDuplicatedFunctionDeclaration str pos
+  where
+    positions = ("printInt", CompilerErr.builtinPosition) : map getPositionPair topDefs
+    getPositionPair (AbsLatte.FnDef _ ident _ _) =
+      (compileFuncIdent ident, getPosition ident)
+
+checkMainSignature :: Signatures -> CompilerErrorM ()
+checkMainSignature signatures =
+  case getMaybeType mainFunctionName signatures of
+    Nothing -> CompilerErr.raiseCEMissingMainFunction
+    Just type_ | type_ /= mainFunctionType -> CompilerErr.raiseCEIncorrectMainFunctionType
+    _ -> return ()
+
 collectSignatures :: [AbsLatte.TopDef] -> Signatures
 collectSignatures topDefs = Signatures $ M.fromList pairs
   where
@@ -58,8 +83,10 @@ compileType AbsLatte.Void = LLVM.Tvoid
 
 compileLatte :: AbsLatte.Program -> CompilerErrorM String
 compileLatte (AbsLatte.Program topDefs) =
-   let signatures = collectSignatures topDefs in
-   do funcLines <- mapM (compileFunc signatures) topDefs
+   do checkDuplicateFnDefs topDefs
+      let signatures = collectSignatures topDefs
+      checkMainSignature signatures
+      funcLines <- mapM (compileFunc signatures) topDefs
       let allLines = concatMap LLVM.showFunc funcLines
       return $ unlines $ latteMain ++ allLines
 
@@ -232,10 +259,14 @@ compileFuncIdent (AbsLatte.CIdent (_, str)) = str
 compileVariableIdent (AbsLatte.CIdent (_, str)) = str
 
 getReturnedType :: String -> Signatures -> CompilerErr.Position -> CompilerErrorM LLVM.Type
-getReturnedType string (Signatures signatures) position =
+getReturnedType string signatures position =
   maybe (raiseCEUndefinedFunction string position)
   (\ (LLVM.FunctionType _ retType) -> return retType )
-  (M.lookup string signatures)
+  (getMaybeType string signatures)
+
+getMaybeType :: String -> Signatures -> Maybe LLVM.FunctionType
+getMaybeType string (Signatures signatures) =
+  M.lookup string signatures
 
 getNextRegister :: NextRegister -> (LLVM.Register, NextRegister)
 getNextRegister (NextRegister num) = (LLVM.Register num, NextRegister (num + 1))
