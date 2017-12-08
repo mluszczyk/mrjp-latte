@@ -1,0 +1,6 @@
+int main() {
+  string x;
+  printString(x);
+  printString(x + x + x + "hello" + x + x);
+  return 0;
+}

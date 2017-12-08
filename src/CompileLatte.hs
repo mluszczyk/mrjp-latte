@@ -3,7 +3,6 @@
 module CompileLatte where
 
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe)
 import qualified AbsLatte
 import CompilerErr (CompilerErrorM, raiseCEUndefinedVariable, raiseCEUndefinedFunction)
 import qualified CompilerErr
@@ -11,6 +10,7 @@ import Control.Monad (foldM, when)
 
 import qualified LLVM
 
+latteMain :: [String]
 latteMain = [ "target triple = \"x86_64-apple-macosx10.13.0\""
             , "@.str = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1"
             , ""
@@ -44,8 +44,12 @@ latteMain = [ "target triple = \"x86_64-apple-macosx10.13.0\""
               ,  "declare i8* @__strcat_chk(i8*, i8*, i64) local_unnamed_addr #3"
               ]
 
+emptyStringConst :: LLVM.Constant
+emptyStringConst = LLVM.Constant 1 "empty_string" ""
 
+mainFunctionName :: String
 mainFunctionName = "main"
+mainFunctionType :: LLVM.FunctionType
 mainFunctionType = LLVM.FunctionType [] LLVM.Ti32
 
 newtype ValueMap = ValueMap (M.Map String (LLVM.Type, LLVM.Register))
@@ -75,6 +79,7 @@ checkDuplicateIdents idents = case
   M.toList (M.filter (\l -> length l >= 2) (M.fromListWith (++) (map (\ (a, b) -> (a, [b])) idents))) of
     [] -> Nothing
     (str, pos : _) : _ -> Just (str, pos)
+    ((_, []):_) -> error "unreachable"
 
 checkDuplicateFnDefs :: [AbsLatte.TopDef] -> CompilerErrorM ()
 checkDuplicateFnDefs topDefs = case checkDuplicateIdents positions of
@@ -111,13 +116,14 @@ compileType AbsLatte.Int = LLVM.Ti32
 compileType AbsLatte.Void = LLVM.Tvoid
 compileType AbsLatte.Bool = LLVM.Ti1
 compileType AbsLatte.Str = LLVM.Ti8Ptr
+compileType (AbsLatte.Fun _ _) = error "unreachable"
 
 compileLatte :: AbsLatte.Program -> CompilerErrorM String
 compileLatte (AbsLatte.Program topDefs) =
    do checkDuplicateFnDefs topDefs
       let signatures = collectSignatures topDefs
       checkMainSignature signatures
-      (funcLines, globalsLines, _) <- foldM (go signatures) ([], [], initConstCounter) topDefs
+      (funcLines, globalsLines, _) <- foldM (go signatures) ([], [emptyStringConst], initConstCounter) topDefs
       let allLines = concatMap LLVM.showFunc funcLines
       return $ unlines $ latteMain ++ map LLVM.showGlobal globalsLines ++ allLines
 
@@ -129,8 +135,8 @@ compileFunc :: Signatures -> AbsLatte.TopDef -> ConstCounter -> CompilerErrorM (
 compileFunc signatures (AbsLatte.FnDef type_ ident args block) constCounter0 =
    do
       mapM_ (\ (num, AbsLatte.Arg argType _) ->
-            checkNotVoid argType "function argument must not be void")
-            (zip [1..] args)
+            checkNotVoid argType $ "invalid void function argument at position " ++ show num)
+            (zip [(1 :: Int)..] args)
       let (argInstrs, argGlobals, valueMap2, nextReg2, constCounter3) =
             foldl (\ (instrs, globals, valueMap0, nextReg0, constCounter1) arg ->
                             let (newInstrs, newGlobals, valueMap1, nextReg1, constCounter2) = saveArgument arg valueMap0 nextReg0 constCounter1 in
@@ -142,15 +148,15 @@ compileFunc signatures (AbsLatte.FnDef type_ ident args block) constCounter0 =
    where
 
      llvmArgs :: [(LLVM.Type, String)]
-     llvmArgs = map (\ (AbsLatte.Arg type_ ident) -> (compileType type_, compileVariableIdent ident)) args
+     llvmArgs = map (\ (AbsLatte.Arg argType argIdent) -> (compileType argType, compileVariableIdent argIdent)) args
 
      saveArgument :: AbsLatte.Arg -> ValueMap -> NextRegister -> ConstCounter -> ([LLVM.Instr], [LLVM.Constant], ValueMap, NextRegister, ConstCounter)
-     saveArgument (AbsLatte.Arg type_ ident) valueMap nextReg constCounter1 =
+     saveArgument (AbsLatte.Arg argType argIdent) valueMap nextReg constCounter1 =
        do let (ptr, nextReg1) = getNextRegister nextReg
-          let llvmType = compileType type_
+          let llvmType = compileType argType
           let alloc = LLVM.IAlloca llvmType ptr
-          let valueMap1 = setVariable (compileVariableIdent ident) llvmType ptr valueMap
-          ([alloc, LLVM.IStore llvmType (LLVM.VRegister $ LLVM.RArgument (compileVariableIdent ident)) llvmType ptr], [], valueMap1, nextReg1, constCounter1)
+          let valueMap1 = setVariable (compileVariableIdent argIdent) llvmType ptr valueMap
+          ([alloc, LLVM.IStore llvmType (LLVM.VRegister $ LLVM.RArgument (compileVariableIdent argIdent)) llvmType ptr], [], valueMap1, nextReg1, constCounter1)
 
      nullRet | lType == LLVM.Tvoid = LLVM.IRetVoid
              | otherwise = LLVM.IRet lType (defaultValue lType)
@@ -159,6 +165,8 @@ compileFunc signatures (AbsLatte.FnDef type_ ident args block) constCounter0 =
 defaultValue :: LLVM.Type -> LLVM.Value
 defaultValue LLVM.Ti1  = LLVM.VFalse
 defaultValue LLVM.Ti32 = LLVM.VConst 0
+defaultValue LLVM.Tvoid = error "unreachable"
+defaultValue LLVM.Ti8Ptr = LLVM.VGetElementPtr 1 "empty_string"
 
 compileBlock :: Signatures -> AbsLatte.Block -> ValueMap -> NextRegister -> ConstCounter -> CompilerErrorM ([LLVM.Instr], [LLVM.Constant], NextRegister, ConstCounter)
 compileBlock signatures (AbsLatte.Block stmts) valueMap0 nextRegister0 constCounter0 =
@@ -170,9 +178,17 @@ compileBlock signatures (AbsLatte.Block stmts) valueMap0 nextRegister0 constCoun
 
 compileFlowBlock :: Signatures -> AbsLatte.Stmt -> ValueMap -> NextRegister -> LLVM.Label -> ConstCounter -> CompilerErrorM ([LLVM.Instr], [LLVM.Constant], NextRegister, ConstCounter)
 compileFlowBlock signatures stmt valueMap0 nextReg0 nextBlock constCounter0 =
-  do (stmts, globals, valueMap1, nextReg1, constCounter1) <- compileStmt signatures stmt valueMap0 nextReg0 constCounter0
+  do (stmts, globals, _, nextReg1, constCounter1) <- compileStmt signatures stmt valueMap0 nextReg0 constCounter0
      return (stmts ++ [LLVM.IBr nextBlock], globals, nextReg1, constCounter1)
 
+compileAssign :: Signatures
+                -> AbsLatte.Expr
+                -> ValueMap
+                -> NextRegister
+                -> LLVM.Type
+                -> LLVM.Register
+                -> ConstCounter
+                -> CompilerErrorM ([LLVM.Instr], [LLVM.Constant], NextRegister, ConstCounter)
 compileAssign signatures expr valueMap nextReg ptrType ptr constCounter0 =
   do (value, type_, stmts, globals, newNextReg, constCounter1) <- compileExpr signatures expr valueMap nextReg constCounter0
      checkType type_ ptrType "wrong type at assignment"
@@ -199,7 +215,7 @@ compileStmt signatures (AbsLatte.Decl type_ decls) valueMap nextReg constCounter
              let instr = [LLVM.IAlloca llvmType ptr]
              (stmts, globals, nextReg3, constCounter2) <- compileAssign signatures expr valueMap nextReg2 llvmType ptr constCounter1
              let valueMap2 = setVariable (compileVariableIdent ident) llvmType ptr valueMap1
-             return (stmts0 ++ instr ++ stmts, globals0 ++ globals, valueMap2, nextReg3, constCounter1)
+             return (stmts0 ++ instr ++ stmts, globals0 ++ globals, valueMap2, nextReg3, constCounter2)
      go (stmts0, globals0, valueMap1, nextReg1, constCounter1) (AbsLatte.NoInit ident) =
           do let (ptr, nextReg2) = getNextRegister nextReg1
              let instr = [LLVM.IAlloca llvmType ptr]
@@ -211,7 +227,7 @@ compileStmt signatures (AbsLatte.Ret expr) valueMap nextReg constCounter0 =
   do (value, type_, stmts, globals, newNextReg, constCounter1) <- compileExpr signatures expr valueMap nextReg constCounter0
      return (stmts ++ [LLVM.IRet type_ value], globals, valueMap, newNextReg, constCounter1)
 
-compileStmt signatures AbsLatte.VRet valueMap nextReg constCounter0 =
+compileStmt _ AbsLatte.VRet valueMap nextReg constCounter0 =
   return ([LLVM.IRetVoid], [], valueMap, nextReg, constCounter0)
 
 compileStmt signatures (AbsLatte.Cond expr stmt1) valueMap0 nextReg0 constCounter0 =
@@ -221,7 +237,7 @@ compileStmt signatures (AbsLatte.Cond expr stmt1) valueMap0 nextReg0 constCounte
      let (contBlock, nextReg3) = getNextLabel nextReg2
      let branch = LLVM.IBrCond LLVM.Ti1 cond ifTrueBlock contBlock
      (ifBlockStmts, ifBlockGlobals, nextReg4, constCounter2) <- compileFlowBlock signatures stmt1 valueMap0 nextReg3 contBlock constCounter1
-     return (condStmts ++ [branch, LLVM.ILabel ifTrueBlock] ++ ifBlockStmts ++ [LLVM.ILabel contBlock], condGlobals ++ ifBlockGlobals, valueMap0, nextReg4, constCounter1)
+     return (condStmts ++ [branch, LLVM.ILabel ifTrueBlock] ++ ifBlockStmts ++ [LLVM.ILabel contBlock], condGlobals ++ ifBlockGlobals, valueMap0, nextReg4, constCounter2)
 
 compileStmt signatures (AbsLatte.CondElse expr stmt1 stmt2) valueMap0 nextReg0 constCounter0 =
   do (cond, type_, condStmts, condGlobals, nextReg1, constCounter1) <- compileExpr signatures expr valueMap0 nextReg0 constCounter0
@@ -255,12 +271,15 @@ compileStmt signatures (AbsLatte.BStmt block) valueMap0 nextReg0 constCounter0 =
 compileStmt _ AbsLatte.Empty valueMap0 nextReg0 constCounter0 =
   return ([], [], valueMap0, nextReg0, constCounter0)
 
+compileStmt _ (AbsLatte.Incr _) _ _ _ = error "not yet implemented"
+compileStmt _ (AbsLatte.Decr _) _ _ _ = error "not yet implemented"
+
 compileExpr :: Signatures -> AbsLatte.Expr -> ValueMap -> NextRegister -> ConstCounter -> CompilerErrorM (LLVM.Value, LLVM.Type, [LLVM.Instr], [LLVM.Constant], NextRegister, ConstCounter)
 compileExpr signatures (AbsLatte.EApp ident args) valueMap nextReg constCounter =
    do (sLines, globals, argVals, argTypes, nextReg1, constCounter1) <- foldM go ([], [], [], [], nextReg, constCounter) args
       (LLVM.FunctionType expectedArgTypes retType) <- getType (compileFuncIdent ident) signatures (getPosition ident)
       mapM_ (\ (num, actType, expType) -> (checkType actType expType ("argument " ++ show num ++ " in function call")))
-            (zip3 [1..] argTypes expectedArgTypes)
+            (zip3 [(1::Int)..] argTypes expectedArgTypes)
       when (length argTypes /= length expectedArgTypes) (CompilerErr.raiseCETypeError "wrong number of function arguments")
       if retType == LLVM.Tvoid then
         return (LLVM.VConst 0, retType, sLines ++ [LLVM.ICall retType (compileFuncIdent ident) (zip argTypes argVals) Nothing], globals, nextReg1, constCounter1)
@@ -273,7 +292,7 @@ compileExpr signatures (AbsLatte.EApp ident args) valueMap nextReg constCounter 
            do (val, type_, newLines, newGLines, nextReg2, constCounter2) <- compileExpr signatures argExpr valueMap nextReg1 constCounter1
               return (sLines ++ newLines, gLines ++ newGLines, argValues ++ [val], argTypes ++ [type_], nextReg2, constCounter2)
 
-compileExpr _ (AbsLatte.ELitInt int) valueMap nextReg constCounter =
+compileExpr _ (AbsLatte.ELitInt int) _ nextReg constCounter =
     return (LLVM.VConst int, LLVM.Ti32, [], [], nextReg, constCounter)
 
 compileExpr _ (AbsLatte.EVar ident) valueMap nextReg constCounter =
@@ -290,15 +309,20 @@ compileExpr signatures (AbsLatte.EMul exp1 mulOp exp2) valueMap nextReg0 constCo
 compileExpr signatures (AbsLatte.ERel exp1 relOp exp2) valueMap nextReg0 constCounter =
   compileArithm signatures exp1 (compileRelOp relOp) exp2 valueMap nextReg0 constCounter
 
-compileExpr signatures AbsLatte.ELitTrue _ nextReg constCounter =
+compileExpr _ AbsLatte.ELitTrue _ nextReg constCounter =
   return (LLVM.VTrue, LLVM.Ti1, [], [], nextReg, constCounter)
 
-compileExpr signatures AbsLatte.ELitFalse _ nextReg constCounter =
+compileExpr _ AbsLatte.ELitFalse _ nextReg constCounter =
   return (LLVM.VFalse, LLVM.Ti1, [], [], nextReg, constCounter)
 
-compileExpr signatures (AbsLatte.EString string) valueMap nextReg0 constCounter =
+compileExpr _ (AbsLatte.EString string) _ nextReg0 constCounter =
   do let (constName, constCounter1) = getNextConst constCounter
      return (LLVM.VGetElementPtr (length string + 1) constName, LLVM.Ti8Ptr, [], [LLVM.Constant (length string + 1) constName string], nextReg0, constCounter1)
+
+compileExpr _ (AbsLatte.Neg _) _ _ _ = error "not yet implemented"
+compileExpr _ (AbsLatte.Not _) _ _ _ = error "not yet implemented"
+compileExpr _ (AbsLatte.EAnd _ _) _ _ _ = error "not yet implemented"
+compileExpr _ (AbsLatte.EOr _ _) _ _ _ = error "not yet implemented"
 
 data Operation = Add | Sub | Mul | Div | Mod
                  | LessThan | LessEqual
@@ -333,6 +357,7 @@ initConstCounter = ConstCounter 0
 getNextConst :: ConstCounter -> (String, ConstCounter)
 getNextConst (ConstCounter num) = ("string" ++ show num, ConstCounter (num + 1))
 
+compileRelOp :: AbsLatte.RelOp -> Operation
 compileRelOp AbsLatte.GE  = GreaterEqual
 compileRelOp AbsLatte.GTH = GreaterThan
 compileRelOp AbsLatte.LE  = LessEqual
@@ -340,6 +365,7 @@ compileRelOp AbsLatte.LTH = LessThan
 compileRelOp AbsLatte.EQU = Equal
 compileRelOp AbsLatte.NE = NotEqual
 
+compileArithm :: Signatures -> AbsLatte.Expr -> Operation -> AbsLatte.Expr -> ValueMap -> NextRegister -> ConstCounter -> CompilerErrorM (LLVM.Value, LLVM.Type, [LLVM.Instr], [LLVM.Constant], NextRegister, ConstCounter)
 compileArithm signatures exp1 op exp2 valueMap nextReg0 constCounter0 =
   do (val1, type1, instr1, globals1, nextReg1, constCounter1) <- compileExpr signatures exp1 valueMap nextReg0 constCounter0
      (val2, type2, instr2, globals2, nextReg2, constCounter2) <- compileExpr signatures exp2 valueMap nextReg1 constCounter1
@@ -349,7 +375,7 @@ compileArithm signatures exp1 op exp2 valueMap nextReg0 constCounter0 =
 
   where
     getInstr type1 type2 =
-      case filter (\ (a, b, c, d, e) -> (a, b, c) == (type1, op, type2)) operations of
+      case filter (\ (a, b, c, _, _) -> (a, b, c) == (type1, op, type2)) operations of
         [] -> CompilerErr.raiseCETypeError "incorrect binary operation"
         (_, _, _, retType, instr) : _ -> return (retType, instr)
 
@@ -370,7 +396,9 @@ compileMulOperator AbsLatte.Div = Div
 compileMulOperator AbsLatte.Mod = Mod
 compileMulOperator AbsLatte.Times = Mul
 
+compileFuncIdent :: AbsLatte.CIdent -> String
 compileFuncIdent (AbsLatte.CIdent (_, str)) = str
+compileVariableIdent :: AbsLatte.CIdent -> String
 compileVariableIdent (AbsLatte.CIdent (_, str)) = str
 
 getType :: String -> Signatures -> CompilerErr.Position -> CompilerErrorM LLVM.FunctionType
