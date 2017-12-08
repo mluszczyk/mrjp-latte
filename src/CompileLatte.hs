@@ -72,7 +72,7 @@ compileFunc signatures (AbsLatte.FnDef type_ ident args block) =
                          ([], initValueMap, initNextRegister) args
 
       (blockLines, _) <- compileBlock signatures block valueMap2 nextReg2
-      return $ LLVM.Function (compileType type_) (compileFuncIdent ident) llvmArgs (argInstrs ++ blockLines ++ [LLVM.IRetVoid | type_ == AbsLatte.Void])
+      return $ LLVM.Function (compileType type_) (compileFuncIdent ident) llvmArgs (argInstrs ++ blockLines ++ [nullRet])
    where
 
      llvmArgs :: [(LLVM.Type, String)]
@@ -85,6 +85,11 @@ compileFunc signatures (AbsLatte.FnDef type_ ident args block) =
           let alloc = LLVM.IAlloca llvmType ptr
           let valueMap1 = setVariable (compileVariableIdent ident) ptr valueMap
           ([alloc, LLVM.IStore llvmType (LLVM.VRegister $ LLVM.RArgument (compileVariableIdent ident)) llvmType ptr], valueMap1, nextReg1)
+
+     nullRet | lType == LLVM.Tvoid = LLVM.IRetVoid
+             | lType == LLVM.Ti32 = LLVM.IRet lType (LLVM.VConst 0)
+             | lType == LLVM.Ti1 = LLVM.IRet lType LLVM.VFalse
+     lType = compileType type_
 
 compileBlock :: Signatures -> AbsLatte.Block -> ValueMap -> NextRegister -> CompilerErrorM ([LLVM.Instr], NextRegister)
 compileBlock signatures (AbsLatte.Block stmts) valueMap0 nextRegister0 =
