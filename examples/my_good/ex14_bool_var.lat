@@ -1,0 +1,18 @@
+boolean myBool() {
+  return true;
+}
+
+int myInt() {
+  boolean my = myBool();
+
+  if (my) {
+    return 5;
+  } else {
+    return 6;
+  }
+}
+
+
+int main() {
+  printInt(myInt());
+}

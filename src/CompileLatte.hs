@@ -22,7 +22,7 @@ latteMain = [ "target triple = \"x86_64-apple-macosx10.13.0\""
 mainFunctionName = "main"
 mainFunctionType = LLVM.FunctionType [] LLVM.Ti32
 
-newtype ValueMap = ValueMap (M.Map String LLVM.Register)
+newtype ValueMap = ValueMap (M.Map String (LLVM.Type, LLVM.Register))
 newtype Signatures = Signatures (M.Map String LLVM.FunctionType)
 newtype NextRegister = NextRegister Int
 
@@ -33,11 +33,11 @@ getPosition (AbsLatte.CIdent ((row, col), _)) = CompilerErr.Position { CompilerE
 initNextRegister :: NextRegister
 initNextRegister = NextRegister 0
 
-setVariable :: String -> LLVM.Register -> ValueMap -> ValueMap
-setVariable name value (ValueMap valueMap) =
-    ValueMap (M.insert name value valueMap)
+setVariable :: String -> LLVM.Type -> LLVM.Register -> ValueMap -> ValueMap
+setVariable name type_ value (ValueMap valueMap) =
+    ValueMap (M.insert name (type_, value) valueMap)
 
-lookupVariable :: String -> ValueMap -> CompilerErr.Position -> CompilerErrorM LLVM.Register
+lookupVariable :: String -> ValueMap -> CompilerErr.Position -> CompilerErrorM (LLVM.Type, LLVM.Register)
 lookupVariable name (ValueMap valueMap) position =
     maybe (raiseCEUndefinedVariable name position) return (M.lookup name valueMap)
 
@@ -80,6 +80,7 @@ collectSignatures topDefs = Signatures $ M.fromList pairs
 compileType :: AbsLatte.Type -> LLVM.Type
 compileType AbsLatte.Int = LLVM.Ti32
 compileType AbsLatte.Void = LLVM.Tvoid
+compileType AbsLatte.Bool = LLVM.Ti1
 
 compileLatte :: AbsLatte.Program -> CompilerErrorM String
 compileLatte (AbsLatte.Program topDefs) =
@@ -111,7 +112,7 @@ compileFunc signatures (AbsLatte.FnDef type_ ident args block) =
        do let (ptr, nextReg1) = getNextRegister nextReg
           let llvmType = compileType type_
           let alloc = LLVM.IAlloca llvmType ptr
-          let valueMap1 = setVariable (compileVariableIdent ident) ptr valueMap
+          let valueMap1 = setVariable (compileVariableIdent ident) llvmType ptr valueMap
           ([alloc, LLVM.IStore llvmType (LLVM.VRegister $ LLVM.RArgument (compileVariableIdent ident)) llvmType ptr], valueMap1, nextReg1)
 
      nullRet | lType == LLVM.Tvoid = LLVM.IRetVoid
@@ -132,9 +133,9 @@ compileFlowBlock signatures stmt valueMap0 nextReg0 nextBlock =
   do (stmts, valueMap1, nextReg1) <- compileStmt signatures stmt valueMap0 nextReg0
      return (stmts ++ [LLVM.IBr nextBlock], nextReg1)
 
-compileAssign signatures expr valueMap nextReg ptr =
+compileAssign signatures expr valueMap nextReg ptrType ptr =
   do (value, type_, stmts, newNextReg) <- compileExpr signatures expr valueMap nextReg
-     -- TODO: check whether type_ is ptr type
+     checkType type_ ptrType "wrong type at assignment"
      return (stmts ++ [LLVM.IStore type_ value type_ ptr], newNextReg)
 
 compileStmt :: Signatures -> AbsLatte.Stmt -> ValueMap -> NextRegister -> CompilerErrorM ([LLVM.Instr], ValueMap, NextRegister)
@@ -143,15 +144,16 @@ compileStmt signatures (AbsLatte.SExp expr) valueMap nextReg =
       return (stmts, valueMap, newNextReg)
 
 compileStmt signatures (AbsLatte.Ass ident expr) valueMap nextReg =
-   do ptr <- lookupVariable (compileVariableIdent ident) valueMap (getPosition ident)
-      (stmts, nextReg1) <- compileAssign signatures expr valueMap nextReg ptr
+   do (type_, ptr) <- lookupVariable (compileVariableIdent ident) valueMap (getPosition ident)
+      (stmts, nextReg1) <- compileAssign signatures expr valueMap nextReg type_ ptr
       return (stmts, valueMap, nextReg1)
 
 compileStmt signatures (AbsLatte.Decl type_ [AbsLatte.Init ident expr]) valueMap nextReg =
   do let (ptr, nextReg1) = getNextRegister nextReg
-     let instr = [LLVM.IAlloca (compileType type_) ptr]
-     (stmts, nextReg2) <- compileAssign signatures expr valueMap nextReg1 ptr
-     let valueMap1 = setVariable (compileVariableIdent ident) ptr valueMap
+     let llvmType = compileType type_
+     let instr = [LLVM.IAlloca llvmType ptr]
+     (stmts, nextReg2) <- compileAssign signatures expr valueMap nextReg1 llvmType ptr
+     let valueMap1 = setVariable (compileVariableIdent ident) llvmType ptr valueMap
      return (instr ++ stmts, valueMap1, nextReg2)
 
 compileStmt signatures (AbsLatte.Ret expr) valueMap nextReg =
@@ -217,9 +219,9 @@ compileExpr _ (AbsLatte.ELitInt int) valueMap nextReg =
     return (LLVM.VConst int, LLVM.Ti32, [], nextReg)
 
 compileExpr _ (AbsLatte.EVar ident) valueMap nextReg =
-  do ptr <- lookupVariable (compileVariableIdent ident) valueMap (getPosition ident)
+  do (type_, ptr) <- lookupVariable (compileVariableIdent ident) valueMap (getPosition ident)
      let (reg, nextReg1) = getNextRegister nextReg
-     return (LLVM.VRegister reg, LLVM.Ti32, [LLVM.ILoad LLVM.Ti32 LLVM.Ti32 ptr reg], nextReg1)
+     return (LLVM.VRegister reg, type_, [LLVM.ILoad type_ type_ ptr reg], nextReg1)
 
 compileExpr signatures (AbsLatte.EAdd exp1 addOp exp2) valueMap nextReg0 =
   compileArithm signatures exp1 (compileAddOperator addOp) exp2 valueMap nextReg0
