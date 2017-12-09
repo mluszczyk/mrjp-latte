@@ -121,26 +121,25 @@ compileFunc signatures (AbsLatte.FnDef type_ ident args block) constCounter0 =
       mapM_ (\ (num, AbsLatte.Arg argType _) ->
             checkNotVoid argType $ "invalid void function argument at position " ++ show num)
             (zip [(1 :: Int)..] args)
-      let (argInstrs, argGlobals, valueMap2, nextReg2, constCounter3) =
-            foldl (\ (instrs, globals, valueMap0, nextReg0, constCounter1) arg ->
-                            let (newInstrs, newGlobals, valueMap1, nextReg1, constCounter2) = saveArgument arg valueMap0 nextReg0 constCounter1 in
-                            (instrs ++ newInstrs, globals ++ newGlobals, valueMap1, nextReg1, constCounter2))
-                         ([], [], initValueMap, initNextRegister, constCounter0) args
-
-      (blockLines, blockGlobals, _, constCounter4) <- compileBlock signatures block valueMap2 nextReg2 constCounter3
-      return (LLVM.Function (compileType type_) (compileFuncIdent ident) llvmArgs (argInstrs ++ blockLines ++ [nullRet]), argGlobals ++ blockGlobals, constCounter4)
+      (instrs, globals, _, _, constCounter1) <- runStatementM signatures initValueMap initNextRegister constCounter0 makeBody
+      return (LLVM.Function (compileType type_) (compileFuncIdent ident) llvmArgs instrs, globals, constCounter1)
    where
-
      llvmArgs :: [(LLVM.Type, String)]
      llvmArgs = map (\ (AbsLatte.Arg argType argIdent) -> (compileType argType, compileVariableIdent argIdent)) args
 
-     saveArgument :: AbsLatte.Arg -> ValueMap -> NextRegister -> ConstCounter -> ([LLVM.Instr], [LLVM.Constant], ValueMap, NextRegister, ConstCounter)
-     saveArgument (AbsLatte.Arg argType argIdent) valueMap nextReg constCounter1 =
-       do let (ptr, nextReg1) = getNextRegister nextReg
+     makeBody :: StatementM ()
+     makeBody =
+       do mapM_ saveArgument args
+          safeValueMap $ nCompileBlock block
+          emitInstruction nullRet
+
+     saveArgument :: AbsLatte.Arg -> StatementM ()
+     saveArgument (AbsLatte.Arg argType argIdent) =
+       do ptr <- getNextRegisterE
           let llvmType = compileType argType
-          let alloc = LLVM.IAlloca llvmType ptr
-          let valueMap1 = setVariable (compileVariableIdent argIdent) llvmType ptr valueMap
-          ([alloc, LLVM.IStore llvmType (LLVM.VRegister $ LLVM.RArgument (compileVariableIdent argIdent)) llvmType ptr], [], valueMap1, nextReg1, constCounter1)
+          emitInstruction $ LLVM.IAlloca llvmType ptr
+          emitInstruction $ LLVM.IStore llvmType (LLVM.VRegister $ LLVM.RArgument (compileVariableIdent argIdent)) llvmType ptr
+          setVariableM (compileVariableIdent argIdent) llvmType ptr
 
      nullRet | lType == LLVM.Tvoid = LLVM.IRetVoid
              | otherwise = LLVM.IRet lType (defaultValue lType)
