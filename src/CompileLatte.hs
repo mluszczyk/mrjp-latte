@@ -161,11 +161,6 @@ nCompileBlock :: AbsLatte.Block -> ExprM ()
 nCompileBlock (AbsLatte.Block stmts) =
   statementInExpr $ mapM_ nCompileStmt stmts
 
-compileFlowBlock :: Signatures -> AbsLatte.Stmt -> ValueMap -> NextRegister -> LLVM.Label -> ConstCounter -> CompilerErrorM ([LLVM.Instr], [LLVM.Constant], NextRegister, ConstCounter)
-compileFlowBlock signatures stmt valueMap0 nextReg0 nextBlock constCounter0 =
-  do ((), instr, globals, nextRegister1, constCounter1) <- runExprM signatures valueMap0 nextReg0 constCounter0 (nCompileFlowBlock stmt nextBlock)
-     return (instr, globals, nextRegister1, constCounter1)
-
 nCompileFlowBlock :: AbsLatte.Stmt -> LLVM.Label -> ExprM ()
 nCompileFlowBlock stmt nextBlock =
   do statementInExpr $ nCompileStmt stmt
@@ -318,11 +313,6 @@ nCompileExpr (AbsLatte.EMul exp1 mulOp exp2) =
   compileArithm exp1 (compileMulOperator mulOp) exp2
 nCompileExpr (AbsLatte.ERel exp1 relOp exp2) =
   compileArithm exp1 (compileRelOp relOp) exp2
-
-compileExpr :: Signatures -> AbsLatte.Expr -> ValueMap -> NextRegister -> ConstCounter -> CompilerErrorM (LLVM.Value, LLVM.Type, [LLVM.Instr], [LLVM.Constant], NextRegister, ConstCounter)
-compileExpr signatures expr valueMap nextRegister0 constCounter0 =
-  do ((val, type_), instr, const_, nextRegister1, constCounter1) <- runExprM signatures valueMap nextRegister0 constCounter0 (nCompileExpr expr)
-     return (val, type_, instr, const_, nextRegister1, constCounter1)
 
 data Operation = Add | Sub | Mul | Div | Mod
                  | LessThan | LessEqual
