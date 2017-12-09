@@ -4,7 +4,7 @@ module CompileLatte where
 
 import qualified Data.Map as M
 import qualified AbsLatte
-import CompilerErr (CompilerErrorM, raiseCEUndefinedVariable)
+import CompilerErr (CompilerErrorM)
 import qualified CompilerErr
 import Control.Monad (foldM, when)
 import Data.Tuple (swap)
@@ -57,20 +57,6 @@ mainFunctionType = LLVM.FunctionType [] LLVM.Ti32
 getPosition :: AbsLatte.CIdent -> CompilerErr.Position
 getPosition (AbsLatte.CIdent ((row, col), _)) = CompilerErr.Position { CompilerErr.row = row
                                                    , CompilerErr.column = col }
-
-initNextRegister :: NextRegister
-initNextRegister = NextRegister 0
-
-setVariable :: String -> LLVM.Type -> LLVM.Register -> ValueMap -> ValueMap
-setVariable name type_ value (ValueMap valueMap) =
-    ValueMap (M.insert name (type_, value) valueMap)
-
-lookupVariable :: String -> ValueMap -> CompilerErr.Position -> CompilerErrorM (LLVM.Type, LLVM.Register)
-lookupVariable name (ValueMap valueMap) position =
-    maybe (raiseCEUndefinedVariable name position) return (M.lookup name valueMap)
-
-initValueMap :: ValueMap
-initValueMap = ValueMap M.empty
 
 checkDuplicateIdents :: [(String, CompilerErr.Position)] -> Maybe (String, CompilerErr.Position)
 checkDuplicateIdents idents = case
@@ -167,110 +153,126 @@ defaultValue LLVM.Tvoid = error "unreachable"
 defaultValue LLVM.Ti8Ptr = LLVM.VGetElementPtr 1 "empty_string"
 
 compileBlock :: Signatures -> AbsLatte.Block -> ValueMap -> NextRegister -> ConstCounter -> CompilerErrorM ([LLVM.Instr], [LLVM.Constant], NextRegister, ConstCounter)
-compileBlock signatures (AbsLatte.Block stmts) valueMap0 nextRegister0 constCounter0 =
-  do (instrs, globals, _, reg, constCounter3) <- foldM go ([], [], valueMap0, nextRegister0, constCounter0) stmts
-     return (instrs, globals, reg, constCounter3)
-  where go (sLines, globals, valueMap, nextRegister, constCounter1) statement =
-          do (newLines, newGlobals, newValueMap, newNextRegister, constCounter2) <- compileStmt signatures statement valueMap nextRegister constCounter1
-             return (sLines ++ newLines, globals ++ newGlobals, newValueMap, newNextRegister, constCounter2)
+compileBlock signatures block valueMap0 nextRegister0 constCounter0 =
+  do (_, instr, const_, nextRegister1, nextRegister2) <- runExprM signatures valueMap0 nextRegister0 constCounter0 (nCompileBlock block)
+     return (instr, const_, nextRegister1, nextRegister2)
+
+nCompileBlock :: AbsLatte.Block -> ExprM ()
+nCompileBlock (AbsLatte.Block stmts) =
+  statementInExpr $ mapM_ nCompileStmt stmts
 
 compileFlowBlock :: Signatures -> AbsLatte.Stmt -> ValueMap -> NextRegister -> LLVM.Label -> ConstCounter -> CompilerErrorM ([LLVM.Instr], [LLVM.Constant], NextRegister, ConstCounter)
 compileFlowBlock signatures stmt valueMap0 nextReg0 nextBlock constCounter0 =
-  do (stmts, globals, _, nextReg1, constCounter1) <- compileStmt signatures stmt valueMap0 nextReg0 constCounter0
-     return (stmts ++ [LLVM.IBr nextBlock], globals, nextReg1, constCounter1)
+  do ((), instr, globals, nextRegister1, constCounter1) <- runExprM signatures valueMap0 nextReg0 constCounter0 (nCompileFlowBlock stmt nextBlock)
+     return (instr, globals, nextRegister1, constCounter1)
 
-compileAssign :: Signatures
-                -> AbsLatte.Expr
-                -> ValueMap
-                -> NextRegister
+nCompileFlowBlock :: AbsLatte.Stmt -> LLVM.Label -> ExprM ()
+nCompileFlowBlock stmt nextBlock =
+  do statementInExpr $ nCompileStmt stmt
+     emitInstruction (LLVM.IBr nextBlock)
+
+compileAssign :: AbsLatte.Expr
                 -> LLVM.Type
                 -> LLVM.Register
-                -> ConstCounter
-                -> CompilerErrorM ([LLVM.Instr], [LLVM.Constant], NextRegister, ConstCounter)
-compileAssign signatures expr valueMap nextReg ptrType ptr constCounter0 =
-  do (value, type_, stmts, globals, newNextReg, constCounter1) <- compileExpr signatures expr valueMap nextReg constCounter0
-     checkType type_ ptrType "wrong type at assignment"
-     return (stmts ++ [LLVM.IStore type_ value type_ ptr], globals, newNextReg, constCounter1)
+                -> ExprM ()
+compileAssign expr ptrType ptr =
+  do (value, type_) <- nCompileExpr expr
+     lift3 $ checkType type_ ptrType "wrong type at assignment"
+     emitInstruction $ LLVM.IStore type_ value type_ ptr
 
-compileStmt :: Signatures -> AbsLatte.Stmt -> ValueMap -> NextRegister -> ConstCounter -> CompilerErrorM ([LLVM.Instr], [LLVM.Constant], ValueMap, NextRegister, ConstCounter)
-compileStmt signatures (AbsLatte.SExp expr) valueMap nextReg constCounter0 =
-   do (_, _, stmts, globals, newNextReg, constCounter1) <- compileExpr signatures expr valueMap nextReg constCounter0
-      return (stmts, globals, valueMap, newNextReg, constCounter1)
+nCompileStmt :: AbsLatte.Stmt -> StatementM ()
+nCompileStmt AbsLatte.VRet =
+  emitInstruction LLVM.IRetVoid
 
-compileStmt signatures (AbsLatte.Ass ident expr) valueMap nextReg constCounter0 =
-   do (type_, ptr) <- lookupVariable (compileVariableIdent ident) valueMap (getPosition ident)
-      (stmts, globals, nextReg1, constCounter1) <- compileAssign signatures expr valueMap nextReg type_ ptr constCounter0
-      return (stmts, globals, valueMap, nextReg1, constCounter1)
+nCompileStmt (AbsLatte.Incr _) = error "not yet implemented"
+nCompileStmt (AbsLatte.Decr _) = error "not yet implemented"
 
-compileStmt signatures (AbsLatte.Decl type_ decls) valueMap nextReg constCounter0 =
-  do checkNotVoid type_ "void variable declarations illegal"
-     foldM go ([], [], valueMap, nextReg, constCounter0) decls
+nCompileStmt AbsLatte.Empty = return ()
 
-  where
-     llvmType = compileType type_
-     go (stmts0, globals0, valueMap1, nextReg1, constCounter1) (AbsLatte.Init ident expr) =
-          do let (ptr, nextReg2) = getNextRegister nextReg1
-             let instr = [LLVM.IAlloca llvmType ptr]
-             (stmts, globals, nextReg3, constCounter2) <- compileAssign signatures expr valueMap nextReg2 llvmType ptr constCounter1
-             let valueMap2 = setVariable (compileVariableIdent ident) llvmType ptr valueMap1
-             return (stmts0 ++ instr ++ stmts, globals0 ++ globals, valueMap2, nextReg3, constCounter2)
-     go (stmts0, globals0, valueMap1, nextReg1, constCounter1) (AbsLatte.NoInit ident) =
-          do let (ptr, nextReg2) = getNextRegister nextReg1
-             let instr = [LLVM.IAlloca llvmType ptr]
-             let stmts = [LLVM.IStore llvmType (defaultValue llvmType) llvmType ptr]
-             let valueMap2 = setVariable (compileVariableIdent ident) llvmType ptr valueMap1
-             return (stmts0 ++ instr ++ stmts, globals0, valueMap2, nextReg2, constCounter1)
+nCompileStmt (AbsLatte.SExp expr) =
+   do (_, _) <- safeValueMap (nCompileExpr expr)
+      return ()
 
-compileStmt signatures (AbsLatte.Ret expr) valueMap nextReg constCounter0 =
-  do (value, type_, stmts, globals, newNextReg, constCounter1) <- compileExpr signatures expr valueMap nextReg constCounter0
-     return (stmts ++ [LLVM.IRet type_ value], globals, valueMap, newNextReg, constCounter1)
+nCompileStmt (AbsLatte.Ret expr)=
+  do (value, type_) <- safeValueMap (nCompileExpr expr)
+     emitInstruction $ LLVM.IRet type_ value
 
-compileStmt _ AbsLatte.VRet valueMap nextReg constCounter0 =
-  return ([LLVM.IRetVoid], [], valueMap, nextReg, constCounter0)
+nCompileStmt (AbsLatte.Ass ident expr) =
+  do valueMap <- readValueMapS
+     (type_, ptr) <- lift3 $ lookupVariable (compileVariableIdent ident) valueMap (getPosition ident)
+     safeValueMap $ compileAssign expr type_ ptr
 
-compileStmt signatures (AbsLatte.Cond expr stmt1) valueMap0 nextReg0 constCounter0 =
-  do (cond, type_, condStmts, condGlobals, nextReg1, constCounter1) <- compileExpr signatures expr valueMap0 nextReg0 constCounter0
-     checkType type_ LLVM.Ti1 "if condition"
-     let (ifTrueBlock, nextReg2) = getNextLabel nextReg1
-     let (contBlock, nextReg3) = getNextLabel nextReg2
-     let branch = LLVM.IBrCond LLVM.Ti1 cond ifTrueBlock contBlock
-     (ifBlockStmts, ifBlockGlobals, nextReg4, constCounter2) <- compileFlowBlock signatures stmt1 valueMap0 nextReg3 contBlock constCounter1
-     return (condStmts ++ [branch, LLVM.ILabel ifTrueBlock] ++ ifBlockStmts ++ [LLVM.ILabel contBlock], condGlobals ++ ifBlockGlobals, valueMap0, nextReg4, constCounter2)
+nCompileStmt (AbsLatte.Decl type_ decls)=
+   do lift3 $ checkNotVoid type_ "void variable declarations illegal"
+      ptrs <- mapM go decls
+      mapM_ (\ (decl, ptr) -> setVariableM (compileVariableIdent (getIdent decl)) llvmType ptr) (zip decls ptrs)
 
-compileStmt signatures (AbsLatte.CondElse expr stmt1 stmt2) valueMap0 nextReg0 constCounter0 =
-  do (cond, type_, condStmts, condGlobals, nextReg1, constCounter1) <- compileExpr signatures expr valueMap0 nextReg0 constCounter0
-     checkType type_ LLVM.Ti1 "if-else condition"
-     let (ifTrueBlock, nextReg2) = getNextLabel nextReg1
-     let (ifElseBlock, nextReg3) = getNextLabel nextReg2
-     let (contBlock, nextReg4) = getNextLabel nextReg3
-     let branch = LLVM.IBrCond LLVM.Ti1 cond ifTrueBlock ifElseBlock
-     (ifTrueBlockStmts, ifTrueGlobals, nextReg5, constCounter2) <- compileFlowBlock signatures stmt1 valueMap0 nextReg4 contBlock constCounter1
-     (ifElseBlockStmts, ifElseGlobals, nextReg6, constCounter3) <- compileFlowBlock signatures stmt2 valueMap0 nextReg5 contBlock constCounter2
-     return (condStmts ++ [branch, LLVM.ILabel ifTrueBlock] ++ ifTrueBlockStmts ++ [LLVM.ILabel ifElseBlock] ++ ifElseBlockStmts ++ [LLVM.ILabel contBlock],
-             condGlobals ++ ifTrueGlobals ++ ifElseGlobals,
-             valueMap0, nextReg6, constCounter3)
+   where
+      llvmType = compileType type_
 
-compileStmt signatures (AbsLatte.While expr stmt) valueMap0 nextReg0 constCounter0 =
-  do let (condBlock, nextReg1) = getNextLabel nextReg0
-     let (bodyBlock, nextReg2) = getNextLabel nextReg1
-     let (contBlock, nextReg3) = getNextLabel nextReg2
-     (bodyBlockInstrs, bodyBlockGlobals, nextReg4, constCounter1) <- compileFlowBlock signatures stmt valueMap0 nextReg3 condBlock constCounter0
-     (cond, type_, condInstrs, condGlobals, nextReg5, constCounter2) <- compileExpr signatures expr valueMap0 nextReg4 constCounter1
-     checkType type_ LLVM.Ti1 "while loop condition"
-     let condBlockInstrs = condInstrs ++ [LLVM.IBrCond LLVM.Ti1 cond bodyBlock contBlock]
-     return ([LLVM.IBr condBlock, LLVM.ILabel bodyBlock] ++ bodyBlockInstrs ++ [LLVM.ILabel condBlock]  ++ condBlockInstrs ++ [LLVM.ILabel contBlock],
-             bodyBlockGlobals ++ condGlobals,
-             valueMap0, nextReg5, constCounter2)
+      getIdent (AbsLatte.Init ident _) = ident
+      getIdent (AbsLatte.NoInit ident) = ident
 
-compileStmt signatures (AbsLatte.BStmt block) valueMap0 nextReg0 constCounter0 =
-  do (instrs, globals, nextReg1, constCounter1) <- compileBlock signatures block valueMap0 nextReg0 constCounter0
-     return (instrs, globals, valueMap0, nextReg1, constCounter1)
+      storeValue (AbsLatte.Init _ expr) ptr =
+        safeValueMap (compileAssign expr llvmType ptr)
+      storeValue (AbsLatte.NoInit _) ptr =
+        emitInstruction $ LLVM.IStore llvmType (defaultValue llvmType) llvmType ptr
 
-compileStmt _ AbsLatte.Empty valueMap0 nextReg0 constCounter0 =
-  return ([], [], valueMap0, nextReg0, constCounter0)
+      go declItem =
+           do ptr <- getNextRegisterE
+              emitInstruction $ LLVM.IAlloca llvmType ptr
+              storeValue declItem ptr
+              return ptr
 
-compileStmt _ (AbsLatte.Incr _) _ _ _ = error "not yet implemented"
-compileStmt _ (AbsLatte.Decr _) _ _ _ = error "not yet implemented"
+nCompileStmt (AbsLatte.BStmt block) = safeValueMap $ nCompileBlock block
+
+nCompileStmt (AbsLatte.Cond expr stmt1) =
+  do (cond, type_) <- safeValueMap $ nCompileExpr expr
+     lift3 $ checkType type_ LLVM.Ti1 "if condition"
+     ifTrueBlock <- getNextLabelE
+     contBlock <- getNextLabelE
+     emitInstruction $ LLVM.IBrCond LLVM.Ti1 cond ifTrueBlock contBlock
+     emitInstruction $ LLVM.ILabel ifTrueBlock
+     safeValueMap $ nCompileFlowBlock stmt1 contBlock
+     emitInstruction $ LLVM.ILabel contBlock
+
+nCompileStmt (AbsLatte.CondElse expr stmt1 stmt2) =
+  do (cond, type_) <- safeValueMap $ nCompileExpr expr
+     lift3 $ checkType type_ LLVM.Ti1 "if-else condition"
+     ifTrueBlock <- getNextLabelE
+     ifElseBlock <- getNextLabelE
+     contBlock <- getNextLabelE
+     emitInstruction $ LLVM.IBrCond LLVM.Ti1 cond ifTrueBlock ifElseBlock
+     emitInstruction $ LLVM.ILabel ifTrueBlock
+     safeValueMap $ nCompileFlowBlock stmt1 contBlock
+     emitInstruction $ LLVM.ILabel ifElseBlock
+     safeValueMap $ nCompileFlowBlock stmt2 contBlock
+     emitInstruction $ LLVM.ILabel contBlock
+
+nCompileStmt (AbsLatte.While expr stmt) =
+  do condBlock <- getNextLabelE
+     bodyBlock <- getNextLabelE
+     contBlock <- getNextLabelE
+     emitInstruction $ LLVM.IBr condBlock
+     emitInstruction $ LLVM.ILabel bodyBlock
+     safeValueMap $ nCompileFlowBlock stmt condBlock
+     emitInstruction $ LLVM.ILabel condBlock
+     (cond, type_) <- safeValueMap $ nCompileExpr expr
+     lift3 $ checkType type_ LLVM.Ti1 "while loop condition"
+     emitInstruction $ LLVM.IBrCond LLVM.Ti1 cond bodyBlock contBlock
+     emitInstruction $ LLVM.ILabel contBlock
+
+compileStmt :: Signatures
+                 -> AbsLatte.Stmt
+                 -> ValueMap
+                 -> NextRegister
+                 -> ConstCounter
+                 -> Either
+                      CompilerErr.CompilerError
+                      ([LLVM.Instr], [LLVM.Constant], ValueMap, NextRegister,
+                       ConstCounter)
+compileStmt signatures stmt valueMap nextReg constCounter =
+  runStatementM signatures valueMap nextReg constCounter (nCompileStmt stmt)
 
 nCompileExpr :: AbsLatte.Expr -> ExprM (LLVM.Value, LLVM.Type)
 nCompileExpr (AbsLatte.EVar ident) =
@@ -319,7 +321,8 @@ nCompileExpr (AbsLatte.ERel exp1 relOp exp2) =
 
 compileExpr :: Signatures -> AbsLatte.Expr -> ValueMap -> NextRegister -> ConstCounter -> CompilerErrorM (LLVM.Value, LLVM.Type, [LLVM.Instr], [LLVM.Constant], NextRegister, ConstCounter)
 compileExpr signatures expr valueMap nextRegister0 constCounter0 =
-  runExprM signatures valueMap nextRegister0 constCounter0 (nCompileExpr expr)
+  do ((val, type_), instr, const_, nextRegister1, constCounter1) <- runExprM signatures valueMap nextRegister0 constCounter0 (nCompileExpr expr)
+     return (val, type_, instr, const_, nextRegister1, constCounter1)
 
 data Operation = Add | Sub | Mul | Div | Mod
                  | LessThan | LessEqual
