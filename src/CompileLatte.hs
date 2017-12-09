@@ -116,12 +116,12 @@ compileLatte (AbsLatte.Program topDefs) =
               return (functions ++ [newFunc], constants ++ newConstants, constCounter1)
 
 compileFunc :: Signatures -> AbsLatte.TopDef -> ConstCounter -> CompilerErrorM (LLVM.Function, [LLVM.Constant], ConstCounter)
-compileFunc signatures (AbsLatte.FnDef type_ ident args block) constCounter0 =
+compileFunc signatures (AbsLatte.FnDef type_ ident args (AbsLatte.Block stmts)) constCounter0 =
    do
       mapM_ (\ (num, AbsLatte.Arg argType _) ->
             checkNotVoid argType $ "invalid void function argument at position " ++ show num)
             (zip [(1 :: Int)..] args)
-      (instrs, globals, _, _, constCounter1) <- runStatementM signatures initValueMap initNextRegister constCounter0 makeBody
+      (instrs, globals, _, _, _, constCounter1) <- runStatementM signatures initNewScopeVars initValueMap initNextRegister constCounter0 makeBody
       return (LLVM.Function (compileType type_) (compileFuncIdent ident) llvmArgs instrs, globals, constCounter1)
    where
      llvmArgs :: [(LLVM.Type, String)]
@@ -130,7 +130,7 @@ compileFunc signatures (AbsLatte.FnDef type_ ident args block) constCounter0 =
      makeBody :: StatementM ()
      makeBody =
        do mapM_ saveArgument args
-          exprInStatement $ compileBlock block
+          mapM_ compileStmt stmts
           emitInstruction nullRet
 
      saveArgument :: AbsLatte.Arg -> StatementM ()
@@ -150,10 +150,6 @@ defaultValue LLVM.Ti1  = LLVM.VFalse
 defaultValue LLVM.Ti32 = LLVM.VConst 0
 defaultValue LLVM.Tvoid = error "unreachable"
 defaultValue LLVM.Ti8Ptr = LLVM.VGetElementPtr 1 "empty_string"
-
-compileBlock :: AbsLatte.Block -> ExprM ()
-compileBlock (AbsLatte.Block stmts) =
-  statementInExpr $ mapM_ compileStmt stmts
 
 compileFlowBlock :: AbsLatte.Stmt -> LLVM.Label -> ExprM ()
 compileFlowBlock stmt nextBlock =
@@ -213,7 +209,8 @@ compileStmt (AbsLatte.Decl type_ decls)=
               storeValue declItem ptr
               return ptr
 
-compileStmt (AbsLatte.BStmt block) = exprInStatement $ compileBlock block
+compileStmt (AbsLatte.BStmt (AbsLatte.Block stmts)) =
+  exprInStatement $ statementInExpr $ mapM_ compileStmt stmts -- TODO: refactor
 
 compileStmt (AbsLatte.Cond expr stmt1) =
   do (cond, type_) <- exprInStatement $ compileExpr expr

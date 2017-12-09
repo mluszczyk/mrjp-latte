@@ -1,0 +1,7 @@
+void foo(int a, int a) {
+  printInt(1);
+}
+
+int main() {
+  return 0;
+}

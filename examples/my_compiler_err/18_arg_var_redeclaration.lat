@@ -1,0 +1,8 @@
+void foo(int a) {
+  int a = 5;
+  printInt(a);
+}
+
+int main() {
+  return 0;
+}

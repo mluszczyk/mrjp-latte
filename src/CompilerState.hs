@@ -16,6 +16,7 @@ newtype StatementEnv = StatementEnv { seSignatures :: Signatures }
 data StatementState = StatementState { ssNextRegister :: NextRegister
                                      , ssConstCounter :: ConstCounter
                                      , ssValueMap :: ValueMap
+                                     , ssNewScopeVars :: [String]
                                      }
 type StatementWr = ExprWr
 type StatementM = ReaderT StatementEnv (StateT StatementState (WriterT StatementWr CompilerErrorM))
@@ -86,14 +87,14 @@ instance (Monad m) => NextRegisterer (StateT ExprState m) where
     return label
 instance (Monad m) => NextRegisterer (StateT StatementState m) where
   getNextRegisterE = do
-    StatementState { ssNextRegister = nextRegister0, ssConstCounter = constCounter, ssValueMap = valueMap } <- get
+    StatementState { ssNextRegister = nextRegister0, ssConstCounter = constCounter, ssValueMap = valueMap, ssNewScopeVars = newScopeVars } <- get
     let (register, nextRegister1) = getNextRegister nextRegister0
-    put StatementState { ssNextRegister = nextRegister1, ssConstCounter = constCounter, ssValueMap = valueMap }
+    put StatementState { ssNextRegister = nextRegister1, ssConstCounter = constCounter, ssValueMap = valueMap, ssNewScopeVars = newScopeVars }
     return register
   getNextLabelE = do
-    StatementState { ssNextRegister = nextRegister0, ssConstCounter = constCounter, ssValueMap = valueMap } <- get
+    StatementState { ssNextRegister = nextRegister0, ssConstCounter = constCounter, ssValueMap = valueMap, ssNewScopeVars = newScopeVars } <- get
     let (label, nextRegister1) = getNextLabel nextRegister0
-    put StatementState { ssNextRegister = nextRegister1, ssConstCounter = constCounter, ssValueMap = valueMap }
+    put StatementState { ssNextRegister = nextRegister1, ssConstCounter = constCounter, ssValueMap = valueMap, ssNewScopeVars = newScopeVars }
     return label
 instance (NextRegisterer m) => NextRegisterer (ReaderT a m) where
   getNextRegisterE = lift getNextRegisterE
@@ -155,35 +156,35 @@ runExprM signatures valueMap nextRegister0 constCounter0 monad =
                   ExprState { esNextRegister = nextRegister0 , esConstCounter = constCounter0 })
      return (res, instr, globals, nextRegister1, constCounter1)
 
-runStatementM :: Signatures -> ValueMap -> NextRegister -> ConstCounter -> StatementM () -> CompilerErrorM ([LLVM.Instr], [LLVM.Constant], ValueMap, NextRegister, ConstCounter)
-runStatementM signatures valueMap0 nextRegister0 constCounter0 monad =
+runStatementM :: Signatures -> [String] -> ValueMap -> NextRegister -> ConstCounter -> StatementM () -> CompilerErrorM ([LLVM.Instr], [LLVM.Constant], [String], ValueMap, NextRegister, ConstCounter)
+runStatementM signatures newScopeVars0 valueMap0 nextRegister0 constCounter0 monad =
   do (((),
-      StatementState { ssNextRegister = nextRegister1, ssConstCounter = constCounter1, ssValueMap = valueMap1 }),
+      StatementState { ssNextRegister = nextRegister1, ssConstCounter = constCounter1, ssValueMap = valueMap1, ssNewScopeVars = newScopeVars1 }),
        ExprWr { ewInstructions = instr, ewGlobals = globals }) <-
         runWriterT (runStateT (runReaderT monad
         StatementEnv { seSignatures = signatures })
-         StatementState { ssNextRegister = nextRegister0, ssConstCounter = constCounter0, ssValueMap = valueMap0 })
-     return (instr, globals, valueMap1, nextRegister1, constCounter1)
+         StatementState { ssNextRegister = nextRegister0, ssConstCounter = constCounter0, ssValueMap = valueMap0, ssNewScopeVars = newScopeVars0 })
+     return (instr, globals, newScopeVars1, valueMap1, nextRegister1, constCounter1)
 
 exprInStatement :: ExprM t -> StatementM t
 exprInStatement exprM =
   do signatures <- readSignatures
-     StatementState { ssValueMap = valueMap, ssConstCounter = constCounter0, ssNextRegister = nextRegister0  } <- get
+     StatementState { ssValueMap = valueMap, ssConstCounter = constCounter0, ssNextRegister = nextRegister0, ssNewScopeVars = newScopeVars  } <- get
      (res, ExprState { esNextRegister = nextRegister1, esConstCounter = constCounter1}) <- lift $ lift $
          runStateT (runReaderT exprM
             ExprEnv { erSignatures = signatures, erValueMap = valueMap })
             ExprState { esNextRegister = nextRegister0, esConstCounter = constCounter0 }
-     put StatementState { ssNextRegister = nextRegister1, ssConstCounter = constCounter1, ssValueMap = valueMap }
+     put StatementState { ssNextRegister = nextRegister1, ssConstCounter = constCounter1, ssValueMap = valueMap, ssNewScopeVars = newScopeVars }
      return res
 
 statementInExpr :: StatementM t -> ExprM t
 statementInExpr statementM =
   do ExprEnv { erSignatures = signatures, erValueMap = valueMap } <- ask
      ExprState { esConstCounter = constCounter0, esNextRegister = nextRegister0  } <- get
-     (res, StatementState { ssNextRegister = nextRegister1, ssConstCounter = constCounter1}) <- lift $ lift $
+     (res, StatementState { ssNextRegister = nextRegister1, ssConstCounter = constCounter1 }) <- lift $ lift $
          runStateT (runReaderT statementM
             StatementEnv { seSignatures = signatures })
-            StatementState { ssNextRegister = nextRegister0, ssConstCounter = constCounter0, ssValueMap = valueMap }
+            StatementState { ssNextRegister = nextRegister0, ssConstCounter = constCounter0, ssValueMap = valueMap, ssNewScopeVars = initNewScopeVars }
      put ExprState { esNextRegister = nextRegister1, esConstCounter = constCounter1 }
      return res
 
@@ -200,8 +201,12 @@ lookupVariable name (ValueMap valueMap) position =
 
 setVariableM :: String -> LLVM.Type -> LLVM.Register -> StatementM ()
 setVariableM name type_ value =
-  do StatementState { ssValueMap = valueMap0, ssConstCounter = constCounter, ssNextRegister = nextRegister } <- get
-     put StatementState { ssValueMap = setVariable name type_ value valueMap0, ssConstCounter = constCounter, ssNextRegister = nextRegister }
+  do StatementState { ssValueMap = valueMap0, ssConstCounter = constCounter, ssNextRegister = nextRegister, ssNewScopeVars = newScopeVars } <- get
+     when (name `elem` newScopeVars) $ lift3 $ CompilerErr.raiseCERedefinitionOfVariable name
+     put StatementState { ssValueMap = setVariable name type_ value valueMap0, ssConstCounter = constCounter, ssNextRegister = nextRegister, ssNewScopeVars = name : newScopeVars }
 
 initValueMap :: ValueMap
 initValueMap = ValueMap M.empty
+
+initNewScopeVars :: [String]
+initNewScopeVars = []
