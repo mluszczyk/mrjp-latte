@@ -1,6 +1,6 @@
 {-# OPTIONS_GHC -Wall -Werror #-}
 
-module CompileLatte where
+module CompileLatte (compileLatte) where
 
 import qualified Data.Map as M
 import qualified AbsLatte
@@ -130,7 +130,7 @@ compileFunc signatures (AbsLatte.FnDef type_ ident args block) constCounter0 =
      makeBody :: StatementM ()
      makeBody =
        do mapM_ saveArgument args
-          safeValueMap $ nCompileBlock block
+          exprInStatement $ compileBlock block
           emitInstruction nullRet
 
      saveArgument :: AbsLatte.Arg -> StatementM ()
@@ -151,18 +151,13 @@ defaultValue LLVM.Ti32 = LLVM.VConst 0
 defaultValue LLVM.Tvoid = error "unreachable"
 defaultValue LLVM.Ti8Ptr = LLVM.VGetElementPtr 1 "empty_string"
 
-compileBlock :: Signatures -> AbsLatte.Block -> ValueMap -> NextRegister -> ConstCounter -> CompilerErrorM ([LLVM.Instr], [LLVM.Constant], NextRegister, ConstCounter)
-compileBlock signatures block valueMap0 nextRegister0 constCounter0 =
-  do (_, instr, const_, nextRegister1, nextRegister2) <- runExprM signatures valueMap0 nextRegister0 constCounter0 (nCompileBlock block)
-     return (instr, const_, nextRegister1, nextRegister2)
+compileBlock :: AbsLatte.Block -> ExprM ()
+compileBlock (AbsLatte.Block stmts) =
+  statementInExpr $ mapM_ compileStmt stmts
 
-nCompileBlock :: AbsLatte.Block -> ExprM ()
-nCompileBlock (AbsLatte.Block stmts) =
-  statementInExpr $ mapM_ nCompileStmt stmts
-
-nCompileFlowBlock :: AbsLatte.Stmt -> LLVM.Label -> ExprM ()
-nCompileFlowBlock stmt nextBlock =
-  do statementInExpr $ nCompileStmt stmt
+compileFlowBlock :: AbsLatte.Stmt -> LLVM.Label -> ExprM ()
+compileFlowBlock stmt nextBlock =
+  do statementInExpr $ compileStmt stmt
      emitInstruction (LLVM.IBr nextBlock)
 
 compileAssign :: AbsLatte.Expr
@@ -170,35 +165,35 @@ compileAssign :: AbsLatte.Expr
                 -> LLVM.Register
                 -> ExprM ()
 compileAssign expr ptrType ptr =
-  do (value, type_) <- nCompileExpr expr
+  do (value, type_) <- compileExpr expr
      lift3 $ checkType type_ ptrType "wrong type at assignment"
      emitInstruction $ LLVM.IStore type_ value type_ ptr
 
-nCompileStmt :: AbsLatte.Stmt -> StatementM ()
-nCompileStmt AbsLatte.VRet =
+compileStmt :: AbsLatte.Stmt -> StatementM ()
+compileStmt AbsLatte.VRet =
   emitInstruction LLVM.IRetVoid
 
-nCompileStmt (AbsLatte.Incr _) = error "not yet implemented"
-nCompileStmt (AbsLatte.Decr _) = error "not yet implemented"
+compileStmt (AbsLatte.Incr _) = error "not yet implemented"
+compileStmt (AbsLatte.Decr _) = error "not yet implemented"
 
-nCompileStmt AbsLatte.Empty = return ()
+compileStmt AbsLatte.Empty = return ()
 
-nCompileStmt (AbsLatte.SExp expr) =
-   do (_, _) <- safeValueMap (nCompileExpr expr)
+compileStmt (AbsLatte.SExp expr) =
+   do (_, _) <- exprInStatement (compileExpr expr)
       return ()
 
-nCompileStmt (AbsLatte.Ret expr)=
-  do (value, type_) <- safeValueMap (nCompileExpr expr)
+compileStmt (AbsLatte.Ret expr)=
+  do (value, type_) <- exprInStatement (compileExpr expr)
      emitInstruction $ LLVM.IRet type_ value
 
-nCompileStmt (AbsLatte.Ass ident expr) =
+compileStmt (AbsLatte.Ass ident expr) =
   do valueMap <- readValueMapS
      (type_, ptr) <- lift3 $ lookupVariable (compileVariableIdent ident) valueMap (getPosition ident)
-     safeValueMap $ compileAssign expr type_ ptr
+     exprInStatement $ compileAssign expr type_ ptr
 
-nCompileStmt (AbsLatte.Decl type_ decls)=
+compileStmt (AbsLatte.Decl type_ decls)=
    do lift3 $ checkNotVoid type_ "void variable declarations illegal"
-      ptrs <- mapM go decls
+      ptrs <- exprInStatement $ mapM go decls
       mapM_ (\ (decl, ptr) -> setVariableM (compileVariableIdent (getIdent decl)) llvmType ptr) (zip decls ptrs)
 
    where
@@ -208,7 +203,7 @@ nCompileStmt (AbsLatte.Decl type_ decls)=
       getIdent (AbsLatte.NoInit ident) = ident
 
       storeValue (AbsLatte.Init _ expr) ptr =
-        safeValueMap (compileAssign expr llvmType ptr)
+        compileAssign expr llvmType ptr
       storeValue (AbsLatte.NoInit _) ptr =
         emitInstruction $ LLVM.IStore llvmType (defaultValue llvmType) llvmType ptr
 
@@ -218,66 +213,54 @@ nCompileStmt (AbsLatte.Decl type_ decls)=
               storeValue declItem ptr
               return ptr
 
-nCompileStmt (AbsLatte.BStmt block) = safeValueMap $ nCompileBlock block
+compileStmt (AbsLatte.BStmt block) = exprInStatement $ compileBlock block
 
-nCompileStmt (AbsLatte.Cond expr stmt1) =
-  do (cond, type_) <- safeValueMap $ nCompileExpr expr
+compileStmt (AbsLatte.Cond expr stmt1) =
+  do (cond, type_) <- exprInStatement $ compileExpr expr
      lift3 $ checkType type_ LLVM.Ti1 "if condition"
      ifTrueBlock <- getNextLabelE
      contBlock <- getNextLabelE
      emitInstruction $ LLVM.IBrCond LLVM.Ti1 cond ifTrueBlock contBlock
      emitInstruction $ LLVM.ILabel ifTrueBlock
-     safeValueMap $ nCompileFlowBlock stmt1 contBlock
+     exprInStatement $ compileFlowBlock stmt1 contBlock
      emitInstruction $ LLVM.ILabel contBlock
 
-nCompileStmt (AbsLatte.CondElse expr stmt1 stmt2) =
-  do (cond, type_) <- safeValueMap $ nCompileExpr expr
+compileStmt (AbsLatte.CondElse expr stmt1 stmt2) =
+  do (cond, type_) <- exprInStatement $ compileExpr expr
      lift3 $ checkType type_ LLVM.Ti1 "if-else condition"
      ifTrueBlock <- getNextLabelE
      ifElseBlock <- getNextLabelE
      contBlock <- getNextLabelE
      emitInstruction $ LLVM.IBrCond LLVM.Ti1 cond ifTrueBlock ifElseBlock
      emitInstruction $ LLVM.ILabel ifTrueBlock
-     safeValueMap $ nCompileFlowBlock stmt1 contBlock
+     exprInStatement $ compileFlowBlock stmt1 contBlock
      emitInstruction $ LLVM.ILabel ifElseBlock
-     safeValueMap $ nCompileFlowBlock stmt2 contBlock
+     exprInStatement $ compileFlowBlock stmt2 contBlock
      emitInstruction $ LLVM.ILabel contBlock
 
-nCompileStmt (AbsLatte.While expr stmt) =
+compileStmt (AbsLatte.While expr stmt) =
   do condBlock <- getNextLabelE
      bodyBlock <- getNextLabelE
      contBlock <- getNextLabelE
      emitInstruction $ LLVM.IBr condBlock
      emitInstruction $ LLVM.ILabel bodyBlock
-     safeValueMap $ nCompileFlowBlock stmt condBlock
+     exprInStatement $ compileFlowBlock stmt condBlock
      emitInstruction $ LLVM.ILabel condBlock
-     (cond, type_) <- safeValueMap $ nCompileExpr expr
+     (cond, type_) <- exprInStatement $ compileExpr expr
      lift3 $ checkType type_ LLVM.Ti1 "while loop condition"
      emitInstruction $ LLVM.IBrCond LLVM.Ti1 cond bodyBlock contBlock
      emitInstruction $ LLVM.ILabel contBlock
 
-compileStmt :: Signatures
-                 -> AbsLatte.Stmt
-                 -> ValueMap
-                 -> NextRegister
-                 -> ConstCounter
-                 -> Either
-                      CompilerErr.CompilerError
-                      ([LLVM.Instr], [LLVM.Constant], ValueMap, NextRegister,
-                       ConstCounter)
-compileStmt signatures stmt valueMap nextReg constCounter =
-  runStatementM signatures valueMap nextReg constCounter (nCompileStmt stmt)
-
-nCompileExpr :: AbsLatte.Expr -> ExprM (LLVM.Value, LLVM.Type)
-nCompileExpr (AbsLatte.EVar ident) =
+compileExpr :: AbsLatte.Expr -> ExprM (LLVM.Value, LLVM.Type)
+compileExpr (AbsLatte.EVar ident) =
   do valueMap <- readValueMap
      (type_, ptr) <- lift3 $ lookupVariable (compileVariableIdent ident) valueMap (getPosition ident)
      reg <- getNextRegisterE
      emitInstruction $ LLVM.ILoad type_ type_ ptr reg
      return (LLVM.VRegister reg, type_)
 
-nCompileExpr (AbsLatte.EApp ident args) =
-  do compiledArgs <- mapM nCompileExpr args
+compileExpr (AbsLatte.EApp ident args) =
+  do compiledArgs <- mapM compileExpr args
      signatures <- readSignatures
      (LLVM.FunctionType expectedArgTypes retType) <- lift3 $ getType (compileFuncIdent ident) signatures (getPosition ident)
      let argTypes = map snd compiledArgs
@@ -292,25 +275,25 @@ nCompileExpr (AbsLatte.EApp ident args) =
        emitInstruction $ LLVM.ICall retType (compileFuncIdent ident) (map swap compiledArgs) (Just register)
        return (LLVM.VRegister register, retType)
 
-nCompileExpr (AbsLatte.ELitInt int) = return (LLVM.VConst int, LLVM.Ti32)
-nCompileExpr AbsLatte.ELitTrue = return (LLVM.VTrue, LLVM.Ti1)
-nCompileExpr AbsLatte.ELitFalse = return (LLVM.VFalse, LLVM.Ti1)
+compileExpr (AbsLatte.ELitInt int) = return (LLVM.VConst int, LLVM.Ti32)
+compileExpr AbsLatte.ELitTrue = return (LLVM.VTrue, LLVM.Ti1)
+compileExpr AbsLatte.ELitFalse = return (LLVM.VFalse, LLVM.Ti1)
 
-nCompileExpr (AbsLatte.EString string) =
+compileExpr (AbsLatte.EString string) =
   do constName <- getNextConstE
      emitGlobal $ LLVM.Constant (length string + 1) constName string
      return (LLVM.VGetElementPtr (length string + 1) constName, LLVM.Ti8Ptr)
 
-nCompileExpr (AbsLatte.Neg _) = error "not yet implemented"
-nCompileExpr (AbsLatte.Not _) = error "not yet implemented"
-nCompileExpr (AbsLatte.EAnd _ _) = error "not yet implemented"
-nCompileExpr (AbsLatte.EOr _ _) = error "not yet implemented"
+compileExpr (AbsLatte.Neg _) = error "not yet implemented"
+compileExpr (AbsLatte.Not _) = error "not yet implemented"
+compileExpr (AbsLatte.EAnd _ _) = error "not yet implemented"
+compileExpr (AbsLatte.EOr _ _) = error "not yet implemented"
 
-nCompileExpr (AbsLatte.EAdd exp1 addOp exp2) =
+compileExpr (AbsLatte.EAdd exp1 addOp exp2) =
   compileArithm exp1 (compileAddOperator addOp) exp2
-nCompileExpr (AbsLatte.EMul exp1 mulOp exp2) =
+compileExpr (AbsLatte.EMul exp1 mulOp exp2) =
   compileArithm exp1 (compileMulOperator mulOp) exp2
-nCompileExpr (AbsLatte.ERel exp1 relOp exp2) =
+compileExpr (AbsLatte.ERel exp1 relOp exp2) =
   compileArithm exp1 (compileRelOp relOp) exp2
 
 data Operation = Add | Sub | Mul | Div | Mod
@@ -350,8 +333,8 @@ compileRelOp AbsLatte.NE = NotEqual
 
 compileArithm :: AbsLatte.Expr -> Operation -> AbsLatte.Expr -> ExprM (LLVM.Value, LLVM.Type)
 compileArithm exp1 op exp2 =
-  do (val1, type1) <- nCompileExpr exp1
-     (val2, type2) <- nCompileExpr exp2
+  do (val1, type1) <- compileExpr exp1
+     (val2, type2) <- compileExpr exp2
      (retType, instr) <- lift3 $ getInstr type1 type2
      reg <- getNextRegisterE
      emitInstruction $ instr val1 val2 reg

@@ -165,8 +165,8 @@ runStatementM signatures valueMap0 nextRegister0 constCounter0 monad =
          StatementState { ssNextRegister = nextRegister0, ssConstCounter = constCounter0, ssValueMap = valueMap0 })
      return (instr, globals, valueMap1, nextRegister1, constCounter1)
 
-safeValueMap :: ExprM t -> StatementM t
-safeValueMap exprM =
+exprInStatement :: ExprM t -> StatementM t
+exprInStatement exprM =
   do signatures <- readSignatures
      StatementState { ssValueMap = valueMap, ssConstCounter = constCounter0, ssNextRegister = nextRegister0  } <- get
      (res, ExprState { esNextRegister = nextRegister1, esConstCounter = constCounter1}) <- lift $ lift $
