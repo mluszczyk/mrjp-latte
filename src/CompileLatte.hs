@@ -4,11 +4,13 @@ module CompileLatte where
 
 import qualified Data.Map as M
 import qualified AbsLatte
-import CompilerErr (CompilerErrorM, raiseCEUndefinedVariable, raiseCEUndefinedFunction)
+import CompilerErr (CompilerErrorM, raiseCEUndefinedVariable)
 import qualified CompilerErr
 import Control.Monad (foldM, when)
+import Data.Tuple (swap)
 
 import qualified LLVM
+import CompilerState
 
 latteMain :: [String]
 latteMain = [ "target triple = \"x86_64-apple-macosx10.13.0\""
@@ -51,10 +53,6 @@ mainFunctionName :: String
 mainFunctionName = "main"
 mainFunctionType :: LLVM.FunctionType
 mainFunctionType = LLVM.FunctionType [] LLVM.Ti32
-
-newtype ValueMap = ValueMap (M.Map String (LLVM.Type, LLVM.Register))
-newtype Signatures = Signatures (M.Map String LLVM.FunctionType)
-newtype NextRegister = NextRegister Int
 
 getPosition :: AbsLatte.CIdent -> CompilerErr.Position
 getPosition (AbsLatte.CIdent ((row, col), _)) = CompilerErr.Position { CompilerErr.row = row
@@ -274,55 +272,54 @@ compileStmt _ AbsLatte.Empty valueMap0 nextReg0 constCounter0 =
 compileStmt _ (AbsLatte.Incr _) _ _ _ = error "not yet implemented"
 compileStmt _ (AbsLatte.Decr _) _ _ _ = error "not yet implemented"
 
+nCompileExpr :: AbsLatte.Expr -> ExprM (LLVM.Value, LLVM.Type)
+nCompileExpr (AbsLatte.EVar ident) =
+  do valueMap <- readValueMap
+     (type_, ptr) <- lift3 $ lookupVariable (compileVariableIdent ident) valueMap (getPosition ident)
+     reg <- getNextRegisterE
+     emitInstruction $ LLVM.ILoad type_ type_ ptr reg
+     return (LLVM.VRegister reg, type_)
+
+nCompileExpr (AbsLatte.EApp ident args) =
+  do compiledArgs <- mapM nCompileExpr args
+     signatures <- readSignatures
+     (LLVM.FunctionType expectedArgTypes retType) <- lift3 $ getType (compileFuncIdent ident) signatures (getPosition ident)
+     let argTypes = map snd compiledArgs
+     mapM_ (\ (num, actType, expType) -> (lift3 $ checkType actType expType ("argument " ++ show num ++ " in function call")))
+           (zip3 [(1::Int)..] argTypes expectedArgTypes)
+     when (length argTypes /= length expectedArgTypes) (lift3 $ CompilerErr.raiseCETypeError "wrong number of function arguments")
+     if retType == LLVM.Tvoid then do
+       emitInstruction $ LLVM.ICall retType (compileFuncIdent ident) (map swap compiledArgs) Nothing
+       return (LLVM.VConst 0, retType)
+     else do
+       register <- getNextRegisterE
+       emitInstruction $ LLVM.ICall retType (compileFuncIdent ident) (map swap compiledArgs) (Just register)
+       return (LLVM.VRegister register, retType)
+
+nCompileExpr (AbsLatte.ELitInt int) = return (LLVM.VConst int, LLVM.Ti32)
+nCompileExpr AbsLatte.ELitTrue = return (LLVM.VTrue, LLVM.Ti1)
+nCompileExpr AbsLatte.ELitFalse = return (LLVM.VFalse, LLVM.Ti1)
+
+nCompileExpr (AbsLatte.EString string) =
+  do constName <- getNextConstE
+     emitGlobal $ LLVM.Constant (length string + 1) constName string
+     return (LLVM.VGetElementPtr (length string + 1) constName, LLVM.Ti8Ptr)
+
+nCompileExpr (AbsLatte.Neg _) = error "not yet implemented"
+nCompileExpr (AbsLatte.Not _) = error "not yet implemented"
+nCompileExpr (AbsLatte.EAnd _ _) = error "not yet implemented"
+nCompileExpr (AbsLatte.EOr _ _) = error "not yet implemented"
+
+nCompileExpr (AbsLatte.EAdd exp1 addOp exp2) =
+  compileArithm exp1 (compileAddOperator addOp) exp2
+nCompileExpr (AbsLatte.EMul exp1 mulOp exp2) =
+  compileArithm exp1 (compileMulOperator mulOp) exp2
+nCompileExpr (AbsLatte.ERel exp1 relOp exp2) =
+  compileArithm exp1 (compileRelOp relOp) exp2
+
 compileExpr :: Signatures -> AbsLatte.Expr -> ValueMap -> NextRegister -> ConstCounter -> CompilerErrorM (LLVM.Value, LLVM.Type, [LLVM.Instr], [LLVM.Constant], NextRegister, ConstCounter)
-compileExpr signatures (AbsLatte.EApp ident args) valueMap nextReg constCounter =
-   do (sLines, globals, argVals, argTypes, nextReg1, constCounter1) <- foldM go ([], [], [], [], nextReg, constCounter) args
-      (LLVM.FunctionType expectedArgTypes retType) <- getType (compileFuncIdent ident) signatures (getPosition ident)
-      mapM_ (\ (num, actType, expType) -> (checkType actType expType ("argument " ++ show num ++ " in function call")))
-            (zip3 [(1::Int)..] argTypes expectedArgTypes)
-      when (length argTypes /= length expectedArgTypes) (CompilerErr.raiseCETypeError "wrong number of function arguments")
-      if retType == LLVM.Tvoid then
-        return (LLVM.VConst 0, retType, sLines ++ [LLVM.ICall retType (compileFuncIdent ident) (zip argTypes argVals) Nothing], globals, nextReg1, constCounter1)
-      else do
-        let (register, nextReg2) = getNextRegister nextReg1
-        return (LLVM.VRegister register, retType, sLines ++ [LLVM.ICall retType (compileFuncIdent ident) (zip argTypes argVals) (Just register)], globals, nextReg2, constCounter1)
-
-   where
-     go (sLines, gLines, argValues, argTypes, nextReg1, constCounter1) argExpr =
-           do (val, type_, newLines, newGLines, nextReg2, constCounter2) <- compileExpr signatures argExpr valueMap nextReg1 constCounter1
-              return (sLines ++ newLines, gLines ++ newGLines, argValues ++ [val], argTypes ++ [type_], nextReg2, constCounter2)
-
-compileExpr _ (AbsLatte.ELitInt int) _ nextReg constCounter =
-    return (LLVM.VConst int, LLVM.Ti32, [], [], nextReg, constCounter)
-
-compileExpr _ (AbsLatte.EVar ident) valueMap nextReg constCounter =
-  do (type_, ptr) <- lookupVariable (compileVariableIdent ident) valueMap (getPosition ident)
-     let (reg, nextReg1) = getNextRegister nextReg
-     return (LLVM.VRegister reg, type_, [LLVM.ILoad type_ type_ ptr reg], [], nextReg1, constCounter)
-
-compileExpr signatures (AbsLatte.EAdd exp1 addOp exp2) valueMap nextReg0 constCounter =
-  compileArithm signatures exp1 (compileAddOperator addOp) exp2 valueMap nextReg0 constCounter
-
-compileExpr signatures (AbsLatte.EMul exp1 mulOp exp2) valueMap nextReg0 constCounter =
-  compileArithm signatures exp1 (compileMulOperator mulOp) exp2 valueMap nextReg0 constCounter
-
-compileExpr signatures (AbsLatte.ERel exp1 relOp exp2) valueMap nextReg0 constCounter =
-  compileArithm signatures exp1 (compileRelOp relOp) exp2 valueMap nextReg0 constCounter
-
-compileExpr _ AbsLatte.ELitTrue _ nextReg constCounter =
-  return (LLVM.VTrue, LLVM.Ti1, [], [], nextReg, constCounter)
-
-compileExpr _ AbsLatte.ELitFalse _ nextReg constCounter =
-  return (LLVM.VFalse, LLVM.Ti1, [], [], nextReg, constCounter)
-
-compileExpr _ (AbsLatte.EString string) _ nextReg0 constCounter =
-  do let (constName, constCounter1) = getNextConst constCounter
-     return (LLVM.VGetElementPtr (length string + 1) constName, LLVM.Ti8Ptr, [], [LLVM.Constant (length string + 1) constName string], nextReg0, constCounter1)
-
-compileExpr _ (AbsLatte.Neg _) _ _ _ = error "not yet implemented"
-compileExpr _ (AbsLatte.Not _) _ _ _ = error "not yet implemented"
-compileExpr _ (AbsLatte.EAnd _ _) _ _ _ = error "not yet implemented"
-compileExpr _ (AbsLatte.EOr _ _) _ _ _ = error "not yet implemented"
+compileExpr signatures expr valueMap nextRegister0 constCounter0 =
+  runExprM signatures valueMap nextRegister0 constCounter0 (nCompileExpr expr)
 
 data Operation = Add | Sub | Mul | Div | Mod
                  | LessThan | LessEqual
@@ -351,12 +348,6 @@ operations = [ (LLVM.Ti32, op, LLVM.Ti32, LLVM.Ti32,
                                    ]
               ]
 
-newtype ConstCounter = ConstCounter Int
-initConstCounter :: ConstCounter
-initConstCounter = ConstCounter 0
-getNextConst :: ConstCounter -> (String, ConstCounter)
-getNextConst (ConstCounter num) = ("string" ++ show num, ConstCounter (num + 1))
-
 compileRelOp :: AbsLatte.RelOp -> Operation
 compileRelOp AbsLatte.GE  = GreaterEqual
 compileRelOp AbsLatte.GTH = GreaterThan
@@ -365,13 +356,14 @@ compileRelOp AbsLatte.LTH = LessThan
 compileRelOp AbsLatte.EQU = Equal
 compileRelOp AbsLatte.NE = NotEqual
 
-compileArithm :: Signatures -> AbsLatte.Expr -> Operation -> AbsLatte.Expr -> ValueMap -> NextRegister -> ConstCounter -> CompilerErrorM (LLVM.Value, LLVM.Type, [LLVM.Instr], [LLVM.Constant], NextRegister, ConstCounter)
-compileArithm signatures exp1 op exp2 valueMap nextReg0 constCounter0 =
-  do (val1, type1, instr1, globals1, nextReg1, constCounter1) <- compileExpr signatures exp1 valueMap nextReg0 constCounter0
-     (val2, type2, instr2, globals2, nextReg2, constCounter2) <- compileExpr signatures exp2 valueMap nextReg1 constCounter1
-     (retType, instr) <- getInstr type1 type2
-     let (reg, nextReg3) = getNextRegister nextReg2
-     return (LLVM.VRegister reg, retType, instr1 ++ instr2 ++ [instr val1 val2 reg], globals1 ++ globals2, nextReg3, constCounter2)
+compileArithm :: AbsLatte.Expr -> Operation -> AbsLatte.Expr -> ExprM (LLVM.Value, LLVM.Type)
+compileArithm exp1 op exp2 =
+  do (val1, type1) <- nCompileExpr exp1
+     (val2, type2) <- nCompileExpr exp2
+     (retType, instr) <- lift3 $ getInstr type1 type2
+     reg <- getNextRegisterE
+     emitInstruction $ instr val1 val2 reg
+     return (LLVM.VRegister reg, retType)
 
   where
     getInstr type1 type2 =
@@ -400,19 +392,3 @@ compileFuncIdent :: AbsLatte.CIdent -> String
 compileFuncIdent (AbsLatte.CIdent (_, str)) = str
 compileVariableIdent :: AbsLatte.CIdent -> String
 compileVariableIdent (AbsLatte.CIdent (_, str)) = str
-
-getType :: String -> Signatures -> CompilerErr.Position -> CompilerErrorM LLVM.FunctionType
-getType string signatures position =
-  maybe (raiseCEUndefinedFunction string position)
-  return
-  (getMaybeType string signatures)
-
-getMaybeType :: String -> Signatures -> Maybe LLVM.FunctionType
-getMaybeType string (Signatures signatures) =
-  M.lookup string signatures
-
-getNextRegister :: NextRegister -> (LLVM.Register, NextRegister)
-getNextRegister (NextRegister num) = (LLVM.Register num, NextRegister (num + 1))
-
-getNextLabel :: NextRegister -> (LLVM.Label, NextRegister)
-getNextLabel (NextRegister num) = (LLVM.Label num, NextRegister (num + 1))

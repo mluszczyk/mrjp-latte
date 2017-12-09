@@ -23,10 +23,12 @@ library
                        LexLatte
                        ParLatte
                        LLVM
+                       CompilerState
   build-depends:       base >= 4.7 && < 5
                      , array
                      , containers
                      , MissingH
+                     , mtl
   default-language:    Haskell2010
 
 executable compile

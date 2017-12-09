@@ -18,7 +18,7 @@ data CompilerError = CEUndefinedVariable { ceIdent :: String
                    | CETypeError String
 
 
-type CompilerErrorM a = Either CompilerError a
+type CompilerErrorM = Either CompilerError
 
 raiseCEUndefinedVariable :: String -> Position -> CompilerErrorM a
 raiseCEUndefinedVariable ident position = Left CEUndefinedVariable { ceIdent = ident
