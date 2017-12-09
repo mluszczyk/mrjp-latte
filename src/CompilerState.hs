@@ -58,16 +58,21 @@ instance (Monad m) => SignatureReader (ReaderT StatementEnv m) where
     StatementEnv { seSignatures = signatures } <- ask
     return signatures
 
+class (Monad m) => ValueMapReader m where
+  readValueMap :: m ValueMap
 
-readValueMap :: ExprM ValueMap
-readValueMap = do
-  ExprEnv { erSignatures = _, erValueMap = valueMap } <- ask
-  return valueMap
+instance (Monad m) => ValueMapReader (ReaderT ExprEnv m) where
+  readValueMap = do
+    ExprEnv { erSignatures = _, erValueMap = valueMap } <- ask
+    return valueMap
 
-readValueMapS :: StatementM ValueMap
-readValueMapS = do
-  st <- get
-  return $ ssValueMap st
+instance (Monad m) => ValueMapReader (StateT StatementState m) where
+  readValueMap = do
+    st <- get
+    return $ ssValueMap st
+
+instance (ValueMapReader m) => ValueMapReader (ReaderT a m) where
+  readValueMap = lift readValueMap
 
 class (Monad m) => NextRegisterer m where
   getNextRegisterE :: m LLVM.Register

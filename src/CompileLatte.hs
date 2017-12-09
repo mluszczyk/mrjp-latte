@@ -187,7 +187,7 @@ compileStmt (AbsLatte.Ret expr)=
      emitInstruction $ LLVM.IRet type_ value
 
 compileStmt (AbsLatte.Ass ident expr) =
-  do valueMap <- readValueMapS
+  do valueMap <- readValueMap
      (type_, ptr) <- lift3 $ lookupVariable (compileVariableIdent ident) valueMap (getPosition ident)
      exprInStatement $ compileAssign expr type_ ptr
 
