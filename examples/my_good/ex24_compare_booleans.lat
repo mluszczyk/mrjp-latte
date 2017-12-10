@@ -1,0 +1,6 @@
+int main() {
+  if (true == true) {
+    printString("OK");
+  }
+  return 0;
+}

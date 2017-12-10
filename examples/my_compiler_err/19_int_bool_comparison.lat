@@ -1,0 +1,8 @@
+int main() {
+  if (true == 1) {
+    print("NOT OK");
+  } else {
+    print("NOT OK EITHER");
+  }
+  return 0;
+}

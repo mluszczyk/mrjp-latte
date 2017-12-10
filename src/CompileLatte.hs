@@ -318,6 +318,12 @@ operations = [ (LLVM.Ti32, op, LLVM.Ti32, LLVM.Ti32,
                                    , (Equal, LLVM.RelOpEQ)
                                    , (NotEqual, LLVM.RelOpNE)
                                    ]
+              ] ++
+              [ (LLVM.Ti1, op, LLVM.Ti1, LLVM.Ti1,
+                  LLVM.IIcmp relOp LLVM.Ti1)
+                  | (op, relOp) <- [ (Equal, LLVM.RelOpEQ)
+                                   , (NotEqual, LLVM.RelOpNE)
+                                   ]
               ]
 
 compileRelOp :: AbsLatte.RelOp -> Operation

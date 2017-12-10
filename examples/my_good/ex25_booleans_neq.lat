@@ -1,0 +1,10 @@
+int main() {
+  if (true != false) {
+    printString("OK");
+  }
+  if (true != true) {
+  } else {
+    printString("OK");
+  }
+  return 0;
+}
