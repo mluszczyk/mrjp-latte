@@ -50,6 +50,11 @@ latteMain = [ "target triple = \"x86_64-apple-macosx10.13.0\""
               ,  "  %4 = icmp eq i32 %3, 0"
               ,  "  ret i1 %4"
               ,  "}"
+              ,  "define zeroext i1 @strne(i8* nocapture readonly, i8* nocapture readonly) local_unnamed_addr #0 {"
+              ,  "  %3 = tail call i32 @strcmp(i8* %0, i8* %1)"
+              ,  "  %4 = icmp ne i32 %3, 0"
+              ,  "  ret i1 %4"
+              ,  "}"
               ]
 
 emptyStringConst :: LLVM.Constant
@@ -333,6 +338,10 @@ operations = [ (LLVM.Ti32, op, LLVM.Ti32, LLVM.Ti32,
               ] ++
               [ (LLVM.Ti8Ptr, Equal, LLVM.Ti8Ptr, LLVM.Ti1,
                   \ v1 v2 reg -> LLVM.ICall LLVM.Ti1 "streq"
+                    [(LLVM.Ti8Ptr, v1), (LLVM.Ti8Ptr, v2)]
+                    (Just reg))
+              , (LLVM.Ti8Ptr, NotEqual, LLVM.Ti8Ptr, LLVM.Ti1,
+                  \ v1 v2 reg -> LLVM.ICall LLVM.Ti1 "strne"
                     [(LLVM.Ti8Ptr, v1), (LLVM.Ti8Ptr, v2)]
                     (Just reg))
               ]
