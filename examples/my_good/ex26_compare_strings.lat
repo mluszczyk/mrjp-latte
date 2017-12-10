@@ -1,0 +1,8 @@
+int main() {
+  string b1 = "blah";
+  string b2 = "b" + "lah";
+  if (b1 == b2) {
+    printString("compare strings OK");
+  }
+  return 0;
+}

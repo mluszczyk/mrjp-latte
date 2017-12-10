@@ -26,6 +26,7 @@ latteMain = [ "target triple = \"x86_64-apple-macosx10.13.0\""
             , "}"
             , "declare i32 @printf(i8*, ...)"
             , "declare i32 @puts(i8*)"
+            , "declare i32 @strcmp(i8* nocapture, i8* nocapture) local_unnamed_addr #1"
             , "define i8* @concat(i8*, i8*) local_unnamed_addr #0 {"
               ,   "%3 = tail call i64 @strlen(i8* %0)"
               ,    "%4 = tail call i64 @strlen(i8* %1)"
@@ -44,6 +45,11 @@ latteMain = [ "target triple = \"x86_64-apple-macosx10.13.0\""
               ,  "declare i8* @__strcpy_chk(i8*, i8*, i64) local_unnamed_addr #3"
               ,  "declare i64 @llvm.objectsize.i64.p0i8(i8*, i1, i1) #4"
               ,  "declare i8* @__strcat_chk(i8*, i8*, i64) local_unnamed_addr #3"
+              ,  "define zeroext i1 @streq(i8* nocapture readonly, i8* nocapture readonly) local_unnamed_addr #0 {"
+              ,  "  %3 = tail call i32 @strcmp(i8* %0, i8* %1)"
+              ,  "  %4 = icmp eq i32 %3, 0"
+              ,  "  ret i1 %4"
+              ,  "}"
               ]
 
 emptyStringConst :: LLVM.Constant
@@ -324,6 +330,11 @@ operations = [ (LLVM.Ti32, op, LLVM.Ti32, LLVM.Ti32,
                   | (op, relOp) <- [ (Equal, LLVM.RelOpEQ)
                                    , (NotEqual, LLVM.RelOpNE)
                                    ]
+              ] ++
+              [ (LLVM.Ti8Ptr, Equal, LLVM.Ti8Ptr, LLVM.Ti1,
+                  \ v1 v2 reg -> LLVM.ICall LLVM.Ti1 "streq"
+                    [(LLVM.Ti8Ptr, v1), (LLVM.Ti8Ptr, v2)]
+                    (Just reg))
               ]
 
 compileRelOp :: AbsLatte.RelOp -> Operation
