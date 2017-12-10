@@ -1,0 +1,23 @@
+void useString(string x) {
+  printString(x);
+  x = x + " foo";
+  printString(x);
+}
+
+
+string retString() {
+  return "ret string";
+}
+
+int main() {
+  string x = "blah";
+  useString(x);
+  printString(x);
+  x = "1234";
+  useString(x);
+  printString(x);
+  x = retString();
+  useString(x);
+  printString(x);
+  return 0;
+}
