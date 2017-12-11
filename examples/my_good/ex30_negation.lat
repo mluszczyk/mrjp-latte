@@ -1,0 +1,6 @@
+int main() {
+  int x = -1234;
+  printInt(x);
+  printInt(-x);
+  return 0;
+}
