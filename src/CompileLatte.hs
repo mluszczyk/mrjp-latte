@@ -310,7 +310,13 @@ compileExpr (AbsLatte.Neg expr) =
      emitInstruction $ LLVM.IArithm LLVM.Ti32 (LLVM.VConst 0) value LLVM.OSub res
      return (LLVM.VRegister res, LLVM.Ti32)
 
-compileExpr (AbsLatte.Not _) = error "not yet implemented"
+compileExpr (AbsLatte.Not expr) =
+  do (value, type_) <- compileExpr expr
+     lift3 $ checkType type_ LLVM.Ti1 "boolean not (boolean required)"
+     res <- getNextRegisterE
+     emitInstruction $ LLVM.IIcmp LLVM.RelOpEQ LLVM.Ti1 LLVM.VFalse value res
+     return (LLVM.VRegister res, LLVM.Ti1)
+
 compileExpr (AbsLatte.EAnd _ _) = error "not yet implemented"
 compileExpr (AbsLatte.EOr _ _) = error "not yet implemented"
 

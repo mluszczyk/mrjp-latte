@@ -1,0 +1,8 @@
+int main() {
+  if (!true) {
+    printString("BAD");
+  } {
+    printString("GOOD");
+  }
+  return 0;
+}

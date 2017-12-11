@@ -1,0 +1,6 @@
+int main() {
+  if (!"blah") {
+    printInt(1);
+  }
+  return 0;
+}
