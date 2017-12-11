@@ -135,3 +135,9 @@ showGlobal (Constant size name string) =
 
    where
      escape s = replace "\\" "\\\\" $ replace "\"" "\\\"" s
+
+showGlobalDecl :: String -> FunctionType -> String
+showGlobalDecl name (FunctionType args ret) =
+  "declare " ++ showType ret ++ " @" ++ name ++ "(" ++
+  intercalate ", " (map showType args) ++
+  ")"

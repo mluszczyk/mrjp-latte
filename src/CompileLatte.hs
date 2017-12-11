@@ -16,46 +16,18 @@ latteMain :: [String]
 latteMain = [ "target triple = \"x86_64-apple-macosx10.13.0\""
             , "@.str = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1"
             , ""
-            , "define void @printInt(i32 %num) {"
-            , "  %1 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str, i32 0, i32 0), i32 %num)"
-            , "  ret void"
-            , "}"
-            , "define void @printString(i8* %string) {"
-            , "  call i32 @puts(i8* %string)"
-            , "  ret void"
-            , "}"
-            , "declare i32 @printf(i8*, ...)"
-            , "declare i32 @puts(i8*)"
-            , "declare i32 @strcmp(i8* nocapture, i8* nocapture) local_unnamed_addr #1"
-            , "define i8* @concat(i8*, i8*) local_unnamed_addr #0 {"
-              ,   "%3 = tail call i64 @strlen(i8* %0)"
-              ,    "%4 = tail call i64 @strlen(i8* %1)"
-              ,    "%5 = add i64 %4, %3"
-              ,    "%6 = shl i64 %5, 32"
-              ,    "%7 = add i64 %6, 4294967296"
-              ,    "%8 = ashr exact i64 %7, 29"
-              ,    "%9 = tail call i8* @malloc(i64 %8) #6"
-              ,    "%10 = tail call i64 @llvm.objectsize.i64.p0i8(i8* %9, i1 false, i1 true)"
-              ,    "%11 = tail call i8* @__strcpy_chk(i8* %9, i8* %0, i64 %10) #7"
-              ,    "%12 = tail call i8* @__strcat_chk(i8* %9, i8* %1, i64 %10) #7"
-              ,    "ret i8* %9"
-              ,  "}"
-              ,  "declare i64 @strlen(i8* nocapture) local_unnamed_addr #1"
-              ,  "declare noalias i8* @malloc(i64) local_unnamed_addr #2"
-              ,  "declare i8* @__strcpy_chk(i8*, i8*, i64) local_unnamed_addr #3"
-              ,  "declare i64 @llvm.objectsize.i64.p0i8(i8*, i1, i1) #4"
-              ,  "declare i8* @__strcat_chk(i8*, i8*, i64) local_unnamed_addr #3"
-              ,  "define zeroext i1 @streq(i8* nocapture readonly, i8* nocapture readonly) local_unnamed_addr #0 {"
-              ,  "  %3 = tail call i32 @strcmp(i8* %0, i8* %1)"
-              ,  "  %4 = icmp eq i32 %3, 0"
-              ,  "  ret i1 %4"
-              ,  "}"
-              ,  "define zeroext i1 @strne(i8* nocapture readonly, i8* nocapture readonly) local_unnamed_addr #0 {"
-              ,  "  %3 = tail call i32 @strcmp(i8* %0, i8* %1)"
-              ,  "  %4 = icmp ne i32 %3, 0"
-              ,  "  ret i1 %4"
-              ,  "}"
-              ]
+            , "declare i8* @concat(i8*, i8*)"
+            , "declare i1 @streq(i8* nocapture readonly, i8* nocapture readonly)"
+            , "declare i1 @strne(i8* nocapture readonly, i8* nocapture readonly)"
+            ]
+
+builtins :: [(String, LLVM.FunctionType)]
+builtins = [ ("printInt", LLVM.FunctionType [LLVM.Ti32] LLVM.Tvoid)
+           , ("printString", LLVM.FunctionType [LLVM.Ti8Ptr] LLVM.Tvoid)
+           , ("readInt", LLVM.FunctionType [] LLVM.Ti32)
+           , ("readString", LLVM.FunctionType [] LLVM.Ti8Ptr)
+           , ("error", LLVM.FunctionType [] LLVM.Tvoid)
+           ]
 
 emptyStringConst :: LLVM.Constant
 emptyStringConst = LLVM.Constant 1 "empty_string" ""
@@ -81,8 +53,7 @@ checkDuplicateFnDefs topDefs = case checkDuplicateIdents positions of
     Nothing -> return ()
     Just (str, pos) -> CompilerErr.raiseCEDuplicatedFunctionDeclaration str pos
   where
-    positions = ("printInt", CompilerErr.builtinPosition) :
-                ("printString", CompilerErr.builtinPosition) :
+    positions = [(name, CompilerErr.builtinPosition) | (name, _) <- builtins] ++
                 map getPositionPair topDefs
     getPositionPair (AbsLatte.FnDef _ ident _ _) =
       (compileFuncIdent ident, getPosition ident)
@@ -97,8 +68,7 @@ checkMainSignature signatures =
 collectSignatures :: [AbsLatte.TopDef] -> Signatures
 collectSignatures topDefs = Signatures $ M.fromList pairs
   where
-    pairs = ("printInt", LLVM.FunctionType [LLVM.Ti32] LLVM.Tvoid) :
-            ("printString", LLVM.FunctionType [LLVM.Ti8Ptr] LLVM.Tvoid) :
+    pairs = builtins ++
             map getSignaturePair topDefs
     getSignaturePair (AbsLatte.FnDef retType ident args _) =
       (compileFuncIdent ident,
@@ -120,7 +90,11 @@ compileLatte (AbsLatte.Program topDefs) =
       checkMainSignature signatures
       (funcLines, globalsLines, _) <- foldM (go signatures) ([], [emptyStringConst], initConstCounter) topDefs
       let allLines = concatMap LLVM.showFunc funcLines
-      return $ unlines $ latteMain ++ map LLVM.showGlobal globalsLines ++ allLines
+      return $ unlines $
+        latteMain ++
+        map LLVM.showGlobal globalsLines ++
+        allLines ++
+        map (uncurry LLVM.showGlobalDecl) builtins
 
    where go signatures (functions, constants, constCounter0) topDef =
            do (newFunc, newConstants, constCounter1) <- compileFunc signatures topDef constCounter0

@@ -1,0 +1,8 @@
+int main() {
+  string x = readString();
+  printString(x);
+  int num1 = readInt();
+  int num2 = readInt();
+  printInt(num1 + num2);
+  return 0;
+}
