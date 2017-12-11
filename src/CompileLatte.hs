@@ -180,8 +180,8 @@ compileStmt :: AbsLatte.Stmt -> StatementM ()
 compileStmt AbsLatte.VRet =
   emitInstruction LLVM.IRetVoid
 
-compileStmt (AbsLatte.Incr _) = error "not yet implemented"
-compileStmt (AbsLatte.Decr _) = error "not yet implemented"
+compileStmt (AbsLatte.Incr ident) = compileIncrDecrHelper ident LLVM.OAdd
+compileStmt (AbsLatte.Decr ident) = compileIncrDecrHelper ident LLVM.OSub
 
 compileStmt AbsLatte.Empty = return ()
 
@@ -258,6 +258,17 @@ compileStmt (AbsLatte.While expr stmt) =
      lift3 $ checkType type_ LLVM.Ti1 "while loop condition"
      emitInstruction $ LLVM.IBrCond LLVM.Ti1 cond bodyBlock contBlock
      emitInstruction $ LLVM.ILabel contBlock
+
+compileIncrDecrHelper :: AbsLatte.CIdent -> LLVM.ArithmOp -> StatementM ()
+compileIncrDecrHelper ident arithmOp =
+  do valueMap <- readValueMapS
+     (type_, ptr) <- lift3 $ lookupVariable (compileVariableIdent ident) valueMap (getPosition ident)
+     lift3 $ checkType LLVM.Ti32 type_ "incrementation (must be int)"
+     operand <- getNextRegisterE
+     result <- getNextRegisterE
+     emitInstruction $ LLVM.ILoad LLVM.Ti32 LLVM.Ti32 ptr operand
+     emitInstruction $ LLVM.IArithm LLVM.Ti32 (LLVM.VRegister operand) (LLVM.VConst 1) arithmOp result
+     emitInstruction $ LLVM.IStore LLVM.Ti32 (LLVM.VRegister result) LLVM.Ti32 ptr
 
 compileExpr :: AbsLatte.Expr -> ExprM (LLVM.Value, LLVM.Type)
 compileExpr (AbsLatte.EVar ident) =
