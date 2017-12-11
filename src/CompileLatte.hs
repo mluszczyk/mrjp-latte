@@ -132,7 +132,7 @@ compileFunc signatures (AbsLatte.FnDef type_ ident args (AbsLatte.Block stmts)) 
       mapM_ (\ (num, AbsLatte.Arg argType _) ->
             checkNotVoid argType $ "invalid void function argument at position " ++ show num)
             (zip [(1 :: Int)..] args)
-      (instrs, globals, _, _, _, constCounter1) <- runStatementM signatures initNewScopeVars initValueMap initNextRegister constCounter0 makeBody
+      (_, instrs, globals, _, _, _, constCounter1) <- runStatementM signatures (LLVM.Label 0) initNewScopeVars initValueMap initNextRegister constCounter0 makeBody
       return (LLVM.Function (compileType type_) (compileFuncIdent ident) llvmArgs instrs, globals, constCounter1)
    where
      llvmArgs :: [(LLVM.Type, String)]
@@ -140,7 +140,9 @@ compileFunc signatures (AbsLatte.FnDef type_ ident args (AbsLatte.Block stmts)) 
 
      makeBody :: StatementM ()
      makeBody =
-       do mapM_ saveArgument args
+       do label <- getNextLabelE
+          emitInstruction $ LLVM.ILabel label
+          mapM_ saveArgument args
           mapM_ compileStmt stmts
           emitInstruction nullRet
 
@@ -317,8 +319,10 @@ compileExpr (AbsLatte.Not expr) =
      emitInstruction $ LLVM.IIcmp LLVM.RelOpEQ LLVM.Ti1 LLVM.VFalse value res
      return (LLVM.VRegister res, LLVM.Ti1)
 
-compileExpr (AbsLatte.EAnd _ _) = error "not yet implemented"
-compileExpr (AbsLatte.EOr _ _) = error "not yet implemented"
+compileExpr (AbsLatte.EAnd expr1 expr2) =
+  compileBooleanOpHelper LLVM.VFalse expr1 expr2
+compileExpr (AbsLatte.EOr expr1 expr2) =
+  compileBooleanOpHelper LLVM.VTrue expr1 expr2
 
 compileExpr (AbsLatte.EAdd exp1 addOp exp2) =
   compileArithm exp1 (compileAddOperator addOp) exp2
@@ -391,6 +395,30 @@ compileArithm exp1 op exp2 =
       case filter (\ (a, b, c, _, _) -> (a, b, c) == (type1, op, type2)) operations of
         [] -> CompilerErr.raiseCETypeError "incorrect binary operation"
         (_, _, _, retType, instr) : _ -> return (retType, instr)
+
+compileBooleanOpHelper :: LLVM.Value -> AbsLatte.Expr -> AbsLatte.Expr -> ExprM (LLVM.Value, LLVM.Type)
+compileBooleanOpHelper skipValue expr1 expr2 =
+  do (val1, type1) <- compileExpr expr1
+     lift3 $ checkType type1 LLVM.Ti1 "first operand in && expression"
+     expr2Block <- getNextLabelE
+     andEndBlock <- getNextLabelE
+     expr1Block <- getCurrentBlock
+     emitInstruction $ jumpOrder (LLVM.IBrCond LLVM.Ti1 val1) expr2Block andEndBlock
+
+     emitInstruction $ LLVM.ILabel expr2Block
+     (val2, type2) <- compileExpr expr2
+     lift3 $ checkType type2 LLVM.Ti1 "second operand in && expression"
+     emitInstruction $ LLVM.IBr andEndBlock
+     expr2Block' <- getCurrentBlock
+
+     emitInstruction $ LLVM.ILabel andEndBlock
+     res <- getNextRegisterE
+     emitInstruction $ LLVM.IPhi LLVM.Ti1 [(skipValue, expr1Block), (val2, expr2Block')] res
+     return (LLVM.VRegister res, LLVM.Ti1)
+  where
+    jumpOrder f a b | skipValue == LLVM.VFalse = f a b
+                    | skipValue == LLVM.VTrue = f b a
+                    | otherwise = error "unreachable"
 
 checkType :: LLVM.Type -> LLVM.Type -> String -> CompilerErrorM ()
 checkType type1 type2 description | type1 == type2 = return ()

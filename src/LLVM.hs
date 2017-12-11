@@ -11,8 +11,10 @@ data Value = VConst Integer
                | VTrue
                | VFalse
                | VGetElementPtr Int String
+               deriving Eq
 
 data Register = Register Int | RArgument String
+              deriving Eq
 
 data Type = Ti32 | Tvoid | Ti1 | Ti8Ptr deriving Eq
 data Instr = ICall Type String [(Type, Value)] (Maybe Register)
@@ -26,6 +28,7 @@ data Instr = ICall Type String [(Type, Value)] (Maybe Register)
                | IStore Type Value Type Register
                | IAlloca Type Register
                | IIcmp Cond Type Value Value Register
+               | IPhi Type [(LLVM.Value, LLVM.Label)] Register
 
 data Cond = RelOpEQ | RelOpNE | RelOpSGT | RelOpSGE | RelOpSLT | RelOpSLE
 
@@ -87,6 +90,10 @@ showInst (IIcmp cond valType val1 val2 reg) =
   showRegister reg ++ " = " ++
   "icmp " ++ showCond cond ++ " " ++ showType valType ++ " " ++
   showValue val1 ++ ", " ++ showValue val2
+showInst (IPhi type_ items res) =
+  showRegister res ++ " = phi " ++ showType type_ ++ " " ++ intercalate ", " (map
+      (\ (value, label) -> "[" ++ showValue value ++ ", %" ++ showLabel label ++ "]")
+      items)
 
 showCall :: Type -> String -> [(Type, Value)] -> String
 showCall retType ident args =

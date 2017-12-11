@@ -1,0 +1,15 @@
+boolean foo() {
+  printString("never reach here");
+  return false;
+}
+
+boolean bar() {
+  printString("reach here");
+  return false;
+}
+
+int main() {
+  int x = 4;
+  (x == 4) || foo();
+  (x == 2) || bar() || bar();
+}
