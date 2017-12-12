@@ -1,0 +1,12 @@
+// This segfaults without name mangling.
+
+void puts(string x) {
+  printString("puts should not be called");
+  error();
+}
+
+int main() {
+  printString("nothing will be printed below");
+
+  return 0;
+}

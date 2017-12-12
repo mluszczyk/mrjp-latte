@@ -1,0 +1,32 @@
+void puts(string x) {
+  printString("puts should not be called");
+  error();
+}
+
+int strlen(string x) {
+  printString("strlen should not be called");
+  error();
+}
+
+void fprintf() {
+  printString("fprintf should not be called");
+  error();
+}
+
+void printf() {
+  printString("printf should not be called");
+  error();
+}
+
+void malloc() {
+  printString("malloc should not be called");
+  error();
+}
+
+int main() {
+  printInt(1 + 2 + 3 + 4);
+  string x = "a" + "b" + "c" + "awertyusdfghjksdfghjsdfghjsdfghjdfghj";
+  printString("nothing will be printed below");
+
+  return 0;
+}

@@ -12,7 +12,7 @@ for input_file in examples/my_good/*.lat; do
   LLVM_ANS="$TEST_DIR/${BASENAME}.llans"
   CORRECT_ANS="examples/my_good/${BASENAME}.output"
   stack exec compile "$input_file" > "$LLFILE"
-  clang "$LLFILE" "$LATTELIB"  -o "$CLANG_OUT"
+  clang -Wall -Werror "$LLFILE" "$LATTELIB" -o "$CLANG_OUT"
   $CLANG_OUT > $LLVM_ANS
   diff -q $CORRECT_ANS $LLVM_ANS
 done

@@ -15,19 +15,25 @@ import CompilerState
 latteMain :: [String]
 latteMain = [ "target triple = \"x86_64-apple-macosx10.13.0\""
             , "@.str = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1"
-            , ""
-            , "declare i8* @concat(i8*, i8*)"
-            , "declare i1 @streq(i8* nocapture readonly, i8* nocapture readonly)"
-            , "declare i1 @strne(i8* nocapture readonly, i8* nocapture readonly)"
             ]
 
 builtins :: [(String, LLVM.FunctionType)]
-builtins = [ ("printInt", LLVM.FunctionType [LLVM.Ti32] LLVM.Tvoid)
-           , ("printString", LLVM.FunctionType [LLVM.Ti8Ptr] LLVM.Tvoid)
-           , ("readInt", LLVM.FunctionType [] LLVM.Ti32)
-           , ("readString", LLVM.FunctionType [] LLVM.Ti8Ptr)
-           , ("error", LLVM.FunctionType [] LLVM.Tvoid)
+builtins = [ ("latte_printInt", LLVM.FunctionType [LLVM.Ti32] LLVM.Tvoid)
+           , ("latte_printString", LLVM.FunctionType [LLVM.Ti8Ptr] LLVM.Tvoid)
+           , ("latte_readInt", LLVM.FunctionType [] LLVM.Ti32)
+           , ("latte_readString", LLVM.FunctionType [] LLVM.Ti8Ptr)
+           , ("latte_error", LLVM.FunctionType [] LLVM.Tvoid)
+           , (concatName, LLVM.FunctionType [LLVM.Ti8Ptr, LLVM.Ti8Ptr] LLVM.Ti8Ptr)
+           , (streqName, LLVM.FunctionType [LLVM.Ti8Ptr, LLVM.Ti8Ptr] LLVM.Ti1)
+           , (strneName, LLVM.FunctionType [LLVM.Ti8Ptr, LLVM.Ti8Ptr] LLVM.Ti1)
            ]
+
+concatName :: String
+concatName = "concat"
+streqName :: String
+streqName = "streq"
+strneName :: String
+strneName = "strne"
 
 emptyStringConst :: LLVM.Constant
 emptyStringConst = LLVM.Constant 1 "empty_string" ""
@@ -318,7 +324,7 @@ operations = [ (LLVM.Ti32, op, LLVM.Ti32, LLVM.Ti32,
                                          (Mod, LLVM.OSRem)
                                    ]] ++
               [ (LLVM.Ti8Ptr, Add, LLVM.Ti8Ptr, LLVM.Ti8Ptr,
-                  \ v1 v2 reg -> LLVM.ICall LLVM.Ti8Ptr "concat"
+                  \ v1 v2 reg -> LLVM.ICall LLVM.Ti8Ptr concatName
                            [(LLVM.Ti8Ptr, v1), (LLVM.Ti8Ptr, v2)]
                            (Just reg)) ] ++
               [ (LLVM.Ti32, op, LLVM.Ti32, LLVM.Ti1,
@@ -338,11 +344,11 @@ operations = [ (LLVM.Ti32, op, LLVM.Ti32, LLVM.Ti32,
                                    ]
               ] ++
               [ (LLVM.Ti8Ptr, Equal, LLVM.Ti8Ptr, LLVM.Ti1,
-                  \ v1 v2 reg -> LLVM.ICall LLVM.Ti1 "streq"
+                  \ v1 v2 reg -> LLVM.ICall LLVM.Ti1 streqName
                     [(LLVM.Ti8Ptr, v1), (LLVM.Ti8Ptr, v2)]
                     (Just reg))
               , (LLVM.Ti8Ptr, NotEqual, LLVM.Ti8Ptr, LLVM.Ti1,
-                  \ v1 v2 reg -> LLVM.ICall LLVM.Ti1 "strne"
+                  \ v1 v2 reg -> LLVM.ICall LLVM.Ti1 strneName
                     [(LLVM.Ti8Ptr, v1), (LLVM.Ti8Ptr, v2)]
                     (Just reg))
               ]
@@ -412,6 +418,7 @@ compileMulOperator AbsLatte.Mod = Mod
 compileMulOperator AbsLatte.Times = Mul
 
 compileFuncIdent :: AbsLatte.CIdent -> String
-compileFuncIdent (AbsLatte.CIdent (_, str)) = str
+compileFuncIdent (AbsLatte.CIdent (_, str)) | str == "main" = str
+                                            | otherwise = "latte_" ++ str
 compileVariableIdent :: AbsLatte.CIdent -> String
 compileVariableIdent (AbsLatte.CIdent (_, str)) = str

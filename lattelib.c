@@ -3,11 +3,11 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
-void printInt(int num) {
+void latte_printInt(int num) {
   printf("%d\n", num);
 }
 
-void printString(const char* str) {
+void latte_printString(const char* str) {
   puts(str);
 }
 
@@ -26,7 +26,7 @@ bool strne(const char* str1, const char* str2) {
   return !streq(str1, str2);
 }
 
-const char* readString() {
+const char* latte_readString() {
   char *line;
   size_t num;
   size_t res = getline(&line, &num, stdin);
@@ -40,13 +40,13 @@ const char* readString() {
   return line;
 }
 
-int readInt() {
+int latte_readInt() {
   int num;
   scanf("%d", &num);
   return num;
 }
 
-void error() {
+void latte_error() {
   fprintf(stderr, "runtime error\n");
   exit(1);
 }
