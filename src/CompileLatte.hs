@@ -5,6 +5,7 @@ module CompileLatte (compileLatte, Position) where
 import qualified Data.Map as M
 import qualified AbsLatte
 import qualified CompilerErr as CE
+import qualified LatteCommon
 import Control.Monad (foldM, when)
 import Data.Tuple (swap)
 
@@ -329,67 +330,65 @@ compileExpr (AbsLatte.EAnd _ expr1 expr2) =
 compileExpr (AbsLatte.EOr _ expr1 expr2) =
   compileBooleanOpHelper LLVM.VTrue expr1 expr2
 
-compileExpr (AbsLatte.EAdd _ exp1 addOp exp2) =
-  compileArithm exp1 (compileAddOperator addOp) exp2
-compileExpr (AbsLatte.EMul _ exp1 mulOp exp2) =
-  compileArithm exp1 (compileMulOperator mulOp) exp2
-compileExpr (AbsLatte.ERel _ exp1 relOp exp2) =
-  compileArithm exp1 (compileRelOp relOp) exp2
+compileExpr (AbsLatte.EAdd pos exp1 addOp exp2) =
+  compileArithm pos exp1 (compileAddOperator addOp) exp2
+compileExpr (AbsLatte.EMul pos exp1 mulOp exp2) =
+  compileArithm pos exp1 (compileMulOperator mulOp) exp2
+compileExpr (AbsLatte.ERel pos exp1 relOp exp2) =
+  compileArithm pos exp1 (compileRelOp relOp) exp2
 
-data Operation = Add | Sub | Mul | Div | Mod
-                 | LessThan | LessEqual
-                 | GreaterThan | GreaterEqual | Equal | NotEqual
-                 deriving Eq
-
-operations :: [ (LLVM.Type, Operation, LLVM.Type, LLVM.Type, LLVM.Value -> LLVM.Value -> LLVM.Register -> LLVM.Instr)]
+operations :: [ (LLVM.Type, LatteCommon.Operation, LLVM.Type, LLVM.Type, LLVM.Value -> LLVM.Value -> LLVM.Register -> LLVM.Instr)]
 operations = [ (LLVM.Ti32, op, LLVM.Ti32, LLVM.Ti32,
                   \ v1 v2 reg -> LLVM.IArithm LLVM.Ti32 v1 v2 llvmOp reg
-                  )   | (op, llvmOp) <- [ (Add, LLVM.OAdd), (Sub, LLVM.OSub)
-                                       , (Mul, LLVM.OMul), (Div, LLVM.OSDiv),
-                                         (Mod, LLVM.OSRem)
+                  )   | (op, llvmOp) <- [ (LatteCommon.Add, LLVM.OAdd)
+                                        , (LatteCommon.Sub, LLVM.OSub)
+                                        , (LatteCommon.Mul, LLVM.OMul)
+                                        , (LatteCommon.Div, LLVM.OSDiv)
+                                        , (LatteCommon.Mod, LLVM.OSRem)
                                    ]] ++
-              [ (LLVM.Ti8Ptr, Add, LLVM.Ti8Ptr, LLVM.Ti8Ptr,
+              [ (LLVM.Ti8Ptr, LatteCommon.Add, LLVM.Ti8Ptr, LLVM.Ti8Ptr,
                   \ v1 v2 reg -> LLVM.ICall LLVM.Ti8Ptr concatName
                            [(LLVM.Ti8Ptr, v1), (LLVM.Ti8Ptr, v2)]
                            (Just reg)) ] ++
               [ (LLVM.Ti32, op, LLVM.Ti32, LLVM.Ti1,
                   LLVM.IIcmp relOp LLVM.Ti32)
-                  | (op, relOp) <- [ (LessThan, LLVM.RelOpSLT)
-                                   , (GreaterThan, LLVM.RelOpSGT)
-                                   , (LessEqual, LLVM.RelOpSLE)
-                                   , (GreaterEqual, LLVM.RelOpSGE)
-                                   , (Equal, LLVM.RelOpEQ)
-                                   , (NotEqual, LLVM.RelOpNE)
+                  | (op, relOp) <- [ (LatteCommon.LessThan, LLVM.RelOpSLT)
+                                   , (LatteCommon.GreaterThan, LLVM.RelOpSGT)
+                                   , (LatteCommon.LessEqual, LLVM.RelOpSLE)
+                                   , (LatteCommon.GreaterEqual, LLVM.RelOpSGE)
+                                   , (LatteCommon.Equal, LLVM.RelOpEQ)
+                                   , (LatteCommon.NotEqual, LLVM.RelOpNE)
                                    ]
               ] ++
               [ (LLVM.Ti1, op, LLVM.Ti1, LLVM.Ti1,
                   LLVM.IIcmp relOp LLVM.Ti1)
-                  | (op, relOp) <- [ (Equal, LLVM.RelOpEQ)
-                                   , (NotEqual, LLVM.RelOpNE)
+                  | (op, relOp) <- [ (LatteCommon.Equal, LLVM.RelOpEQ)
+                                   , (LatteCommon.NotEqual, LLVM.RelOpNE)
                                    ]
               ] ++
-              [ (LLVM.Ti8Ptr, Equal, LLVM.Ti8Ptr, LLVM.Ti1,
+              [ (LLVM.Ti8Ptr, LatteCommon.Equal, LLVM.Ti8Ptr, LLVM.Ti1,
                   \ v1 v2 reg -> LLVM.ICall LLVM.Ti1 streqName
                     [(LLVM.Ti8Ptr, v1), (LLVM.Ti8Ptr, v2)]
                     (Just reg))
-              , (LLVM.Ti8Ptr, NotEqual, LLVM.Ti8Ptr, LLVM.Ti1,
+              , (LLVM.Ti8Ptr, LatteCommon.NotEqual, LLVM.Ti8Ptr, LLVM.Ti1,
                   \ v1 v2 reg -> LLVM.ICall LLVM.Ti1 strneName
                     [(LLVM.Ti8Ptr, v1), (LLVM.Ti8Ptr, v2)]
                     (Just reg))
               ]
 
-compileRelOp :: AbsLatte.RelOp a -> Operation
-compileRelOp (AbsLatte.GE _)  = GreaterEqual
-compileRelOp (AbsLatte.GTH _) = GreaterThan
-compileRelOp (AbsLatte.LE _)  = LessEqual
-compileRelOp (AbsLatte.LTH _) = LessThan
-compileRelOp (AbsLatte.EQU _) = Equal
-compileRelOp (AbsLatte.NE _) = NotEqual
+compileRelOp :: AbsLatte.RelOp a -> LatteCommon.Operation
+compileRelOp (AbsLatte.GE _)  = LatteCommon.GreaterEqual
+compileRelOp (AbsLatte.GTH _) = LatteCommon.GreaterThan
+compileRelOp (AbsLatte.LE _)  = LatteCommon.LessEqual
+compileRelOp (AbsLatte.LTH _) = LatteCommon.LessThan
+compileRelOp (AbsLatte.EQU _) = LatteCommon.Equal
+compileRelOp (AbsLatte.NE _) = LatteCommon.NotEqual
 
-compileArithm :: AbsLatte.Expr Position
-                -> Operation
+compileArithm :: Position
+                -> AbsLatte.Expr Position
+                -> LatteCommon.Operation
                 -> AbsLatte.Expr Position -> ExprM (LLVM.Value, LLVM.Type)
-compileArithm exp1 op exp2 =
+compileArithm position exp1 op exp2 =
   do (val1, type1) <- compileExpr exp1
      (val2, type2) <- compileExpr exp2
      (retType, instr) <- lift3 $ getInstr type1 type2
@@ -400,7 +399,7 @@ compileArithm exp1 op exp2 =
   where
     getInstr type1 type2 =
       case filter (\ (a, b, c, _, _) -> (a, b, c) == (type1, op, type2)) operations of
-        [] -> CE.raise $ CE.CETypeError "incorrect binary operation"
+        [] -> CE.raise $ CE.CEInvalidBinaryOp (compilePosition position) type1 op type2
         (_, _, _, retType, instr) : _ -> return (retType, instr)
 
 compileBooleanOpHelper :: LLVM.Value
@@ -438,14 +437,14 @@ checkNotVoid :: AbsLatte.Type Position -> CE.CompilerError -> CE.CompilerErrorM 
 checkNotVoid (AbsLatte.Void _) ce = CE.raise ce
 checkNotVoid _ _ = return ()
 
-compileAddOperator :: AbsLatte.AddOp a -> Operation
-compileAddOperator (AbsLatte.Plus _) = Add
-compileAddOperator (AbsLatte.Minus _) = Sub
+compileAddOperator :: AbsLatte.AddOp a -> LatteCommon.Operation
+compileAddOperator (AbsLatte.Plus _) = LatteCommon.Add
+compileAddOperator (AbsLatte.Minus _) = LatteCommon.Sub
 
-compileMulOperator :: AbsLatte.MulOp a -> Operation
-compileMulOperator (AbsLatte.Div _) = Div
-compileMulOperator (AbsLatte.Mod _) = Mod
-compileMulOperator (AbsLatte.Times _) = Mul
+compileMulOperator :: AbsLatte.MulOp a -> LatteCommon.Operation
+compileMulOperator (AbsLatte.Div _) = LatteCommon.Div
+compileMulOperator (AbsLatte.Mod _) = LatteCommon.Mod
+compileMulOperator (AbsLatte.Times _) = LatteCommon.Mul
 
 compileFuncIdent :: AbsLatte.CIdent -> String
 compileFuncIdent (AbsLatte.CIdent str) | str == "main" = str

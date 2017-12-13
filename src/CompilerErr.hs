@@ -3,6 +3,11 @@
 module CompilerErr where
 
 import qualified AbsLatte
+import qualified LLVM
+
+import qualified LatteCommon
+
+type Type = LLVM.Type
 type VariableIdent = AbsLatte.CIdent
 type FunctionIdent = AbsLatte.CIdent
 
@@ -28,7 +33,10 @@ data CompilerError = CEUndefinedVariable { ceVariableIdent :: VariableIdent
                                                       , ceExpectedArgs :: Int
                                                       , ceGotIntArgs :: Int
                                                       , ceFunction :: FunctionIdent }
-
+                   | CEInvalidBinaryOp { cePosition :: Position
+                                       , ceType1 :: Type
+                                       , ceOperation :: LatteCommon.Operation
+                                       , ceType2 :: Type }
 
 type CompilerErrorM = Either CompilerError
 
@@ -66,9 +74,32 @@ errorToString (CEWrongNumberOfFunctionArguments position expArgs gotArgs ident) 
   "wrong number of arguments to function " ++ showFunctionIdent ident ++
   " " ++ showPosition position ++
   ", expected " ++ show expArgs ++ ", got " ++ show gotArgs
+errorToString (CEInvalidBinaryOp position type1 op type2) =
+  "invalid binary operation " ++
+  showType type1 ++ showOperator op ++ showType type2 ++
+  " " ++ showPosition position
 
 showVariableIdent :: VariableIdent -> String
 showVariableIdent (AbsLatte.CIdent string) = string
 
 showFunctionIdent :: FunctionIdent -> String
 showFunctionIdent (AbsLatte.CIdent string) = string
+
+showType :: Type -> String
+showType LLVM.Ti1 = "boolean"
+showType LLVM.Ti32 = "int"
+showType LLVM.Ti8Ptr = "string"
+showType LLVM.Tvoid = "void"
+
+showOperator :: LatteCommon.Operation -> String
+showOperator LatteCommon.Mul = "*"
+showOperator LatteCommon.Add = "+"
+showOperator LatteCommon.Div = "/"
+showOperator LatteCommon.Mod = "%"
+showOperator LatteCommon.Sub = "-"
+showOperator LatteCommon.Equal = "=="
+showOperator LatteCommon.NotEqual = "!="
+showOperator LatteCommon.LessThan = "<"
+showOperator LatteCommon.GreaterThan = ">"
+showOperator LatteCommon.LessEqual = "<="
+showOperator LatteCommon.GreaterEqual = ">="
