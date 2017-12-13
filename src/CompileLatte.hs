@@ -333,7 +333,13 @@ compileExpr (AbsLatte.EString _ string) =
             init rest
     unquot _ = error "incorrect string, too short"
 
-    unescape = id
+    unescape [] = []
+    unescape ('\\' : 'n' : s) = '\n' : unescape s
+    unescape ('\\' : 't' : s) = '\t' : unescape s
+    unescape ('\\' : '"' : s) = '"' : unescape s
+    unescape ('\\' : '\\' : s) = '\\' : unescape s
+    unescape ('\\': s) = '\\' : unescape s
+    unescape (a : s) = a : unescape s
 
 compileExpr (AbsLatte.Neg pos expr) =
   do (value, type_) <- compileExpr expr

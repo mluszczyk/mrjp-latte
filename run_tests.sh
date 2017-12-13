@@ -5,8 +5,8 @@ LATTELIB="lattelib.c"
 TEST_TEMPLATE="${TMPDIR}latteXXX"
 TEST_DIR=`mktemp -d "$TEST_TEMPLATE"`
 
-# consider adding ../mrjp-tests/good/basic/*.lat
-for input_file in examples/my_good/*.lat ../lattests/good/*.lat; do
+# consider adding 
+for input_file in examples/my_good/*.lat ../lattests/good/*.lat ../mrjp-tests/good/basic/*.lat; do
   LAT_DIR=`dirname "$input_file"`
   BASENAME=`basename "$input_file" .lat`
   LLFILE="$TEST_DIR/${BASENAME}.ll"
@@ -23,7 +23,7 @@ for input_file in examples/my_good/*.lat ../lattests/good/*.lat; do
   diff -q $CORRECT_ANS $LLVM_ANS
 done
 
-for input_file in examples/my_compiler_err/*.lat; do
+for input_file in examples/my_compiler_err/*.lat ../lattests/bad/*.lat; do
   BASENAME=`basename "$input_file" .lat`
   LLFILE="$TEST_DIR/${BASENAME}.ll"
   CERR_FILE="$TEST_DIR/${BASENAME}.compiler-error"

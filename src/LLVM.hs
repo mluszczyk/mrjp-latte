@@ -3,7 +3,6 @@
 module LLVM where
 
 import Data.List (intercalate)
-import Data.String.Utils (replace)
 
 
 data Value = VConst Integer
@@ -134,7 +133,12 @@ showGlobal (Constant size name string) =
    show size ++ " x i8] c\"" ++ escape string ++ "\\00\", align 1"
 
    where
-     escape s = replace "\\" "\\\\" $ replace "\"" "\\\"" s
+     escape [] = []
+     escape ('\\' : s) = '\\': '5' : 'C' : escape s
+     escape ('\n' : s) = '\\' : '0' : 'A' : escape s
+     escape ('\t' : s) = '\\' : '0' : '9' : escape s
+     escape ('"' : s) = '\\' : '2' : '2' : escape s
+     escape (a : s) = a : escape s
 
 showGlobalDecl :: String -> FunctionType -> String
 showGlobalDecl name (FunctionType args ret) =
