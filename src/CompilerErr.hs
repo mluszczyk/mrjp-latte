@@ -24,6 +24,10 @@ data CompilerError = CEUndefinedVariable { ceVariableIdent :: VariableIdent
                    | CEVoidFunctionArgument { cePosition :: Position
                                             , ceArgumentNumber :: Int }
                    | CEVoidDeclaration Position
+                   | CEWrongNumberOfFunctionArguments { cePosition :: Position
+                                                      , ceExpectedArgs :: Int
+                                                      , ceGotIntArgs :: Int
+                                                      , ceFunction :: FunctionIdent }
 
 
 type CompilerErrorM = Either CompilerError
@@ -58,6 +62,10 @@ errorToString (CEVoidDeclaration position) =
 errorToString (CEVoidFunctionArgument position argNum) =
   "void expression passed to a function as argument " ++ show argNum ++ " " ++
   showPosition position
+errorToString (CEWrongNumberOfFunctionArguments position expArgs gotArgs ident) =
+  "wrong number of arguments to function " ++ showFunctionIdent ident ++
+  " " ++ showPosition position ++
+  ", expected " ++ show expArgs ++ ", got " ++ show gotArgs
 
 showVariableIdent :: VariableIdent -> String
 showVariableIdent (AbsLatte.CIdent string) = string

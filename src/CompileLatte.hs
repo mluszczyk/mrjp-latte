@@ -278,7 +278,9 @@ compileExpr (AbsLatte.EApp pos ident args) =
      let argTypes = map snd compiledArgs
      mapM_ (\ (num, actType, expType) -> (lift3 $ checkType actType expType ("argument " ++ show num ++ " in function call")))
            (zip3 [(1::Int)..] argTypes expectedArgTypes)
-     when (length argTypes /= length expectedArgTypes) (lift3 $ CE.raise $ CE.CETypeError "wrong number of function arguments")
+     when (length argTypes /= length expectedArgTypes) (
+        lift3 $ CE.raise $ CE.CEWrongNumberOfFunctionArguments
+          (compilePosition pos) (length expectedArgTypes) (length argTypes) ident)
      if retType == LLVM.Tvoid then do
        emitInstruction $ LLVM.ICall retType (compileFuncIdent ident) (map swap compiledArgs) Nothing
        return (LLVM.VConst 0, retType)
