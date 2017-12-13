@@ -8,6 +8,7 @@ import qualified CompilerErr as CE
 import qualified LatteCommon
 import Control.Monad (foldM, when)
 import Data.Tuple (swap)
+import Data.Maybe (mapMaybe)
 
 import qualified LLVM
 import CompilerState
@@ -73,11 +74,12 @@ compilePosition Nothing = error "unknown position passed"
 compilePosition (Just (x, y)) =
   CE.Position { CE.row = x, CE.column = y}
 
-checkMainSignature :: Signatures -> CE.CompilerErrorM ()
-checkMainSignature signatures =
+checkMainSignature :: Signatures -> Position -> CE.CompilerErrorM ()
+checkMainSignature signatures mainPosition =
   case getMaybeType mainFunctionName signatures of
     Nothing -> CE.raise CE.CEMissingMainFunction
-    Just type_ | type_ /= mainFunctionType -> CE.raise CE.CEIncorrectMainFunctionType
+    Just type_ | type_ /= mainFunctionType ->
+      CE.raise $ CE.CEIncorrectMainFunctionType (compilePosition mainPosition)
     _ -> return ()
 
 collectSignatures :: [AbsLatte.TopDef Position] -> Signatures
@@ -98,11 +100,22 @@ compileType (AbsLatte.Bool _) = LLVM.Ti1
 compileType (AbsLatte.Str _) = LLVM.Ti8Ptr
 compileType AbsLatte.Fun {} = error "unreachable"
 
+-- must be evaluated after checking that main function exists
+getMainPosition :: [AbsLatte.TopDef Position] -> Position
+getMainPosition topDefs =
+  case mapMaybe go topDefs of
+    [pos] -> pos
+    _ -> error "unreachable"
+  where
+    go (AbsLatte.FnDef pos _ ident _ _)
+      | ident == AbsLatte.CIdent "main" = Just pos
+      | otherwise = Nothing
+
 compileLatte :: AbsLatte.Program Position -> CE.CompilerErrorM String
 compileLatte (AbsLatte.Program _ topDefs) =
    do checkDuplicateFnDefs topDefs
       let signatures = collectSignatures topDefs
-      checkMainSignature signatures
+      checkMainSignature signatures (getMainPosition topDefs)
       (funcLines, globalsLines, _) <- foldM (go signatures) ([], [emptyStringConst], initConstCounter) topDefs
       let allLines = concatMap LLVM.showFunc funcLines
       return $ unlines $
