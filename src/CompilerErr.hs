@@ -24,7 +24,10 @@ data CompilerError = CEUndefinedVariable { ceVariableIdent :: VariableIdent
                                                      , cePosition :: Position }
                    | CEMissingMainFunction
                    | CEIncorrectMainFunctionType
-                   | CETypeError String
+                   | CETypeError { cePosition :: Position
+                                 , ceExpectedType :: Type
+                                 , ceActualType :: Type
+                                 , ceDescription :: String }
                    | CERedefinitionOfVariable VariableIdent
                    | CEVoidFunctionArgument { cePosition :: Position
                                             , ceArgumentNumber :: Int }
@@ -62,7 +65,9 @@ errorToString CEDuplicatedFunctionDeclaration { ceFunctionIdent = ident
 
 errorToString CEMissingMainFunction = "main function not declared"
 errorToString CEIncorrectMainFunctionType = "incorrect type of main function; should return int and take no arguments"
-errorToString (CETypeError description) = "type error in " ++ description
+errorToString (CETypeError position expType actType description) =
+  "type error in " ++ description ++ " " ++ showPosition position ++
+  ", expected " ++ showType expType ++ ", got " ++ showType actType
 errorToString (CERedefinitionOfVariable ident) =
   "variable " ++ showVariableIdent ident ++ " redefined"
 errorToString (CEVoidDeclaration position) =

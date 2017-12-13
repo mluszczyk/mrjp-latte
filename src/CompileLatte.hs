@@ -161,13 +161,14 @@ compileFlowBlock stmt nextBlock =
   do statementInExpr $ compileStmt stmt
      emitInstruction (LLVM.IBr nextBlock)
 
-compileAssign :: AbsLatte.Expr Position
+compileAssign :: Position
+                -> AbsLatte.Expr Position
                 -> LLVM.Type
                 -> LLVM.Register
                 -> ExprM ()
-compileAssign expr ptrType ptr =
+compileAssign position expr ptrType ptr =
   do (value, type_) <- compileExpr expr
-     lift3 $ checkType type_ ptrType "wrong type at assignment"
+     lift3 $ checkType position ptrType type_ "assignment"
      emitInstruction $ LLVM.IStore type_ value type_ ptr
 
 compileStmt :: AbsLatte.Stmt Position -> StatementM ()
@@ -190,9 +191,9 @@ compileStmt (AbsLatte.Ret _ expr)=
 compileStmt (AbsLatte.Ass pos ident expr) =
   do valueMap <- readValueMapS
      (type_, ptr) <- lift3 $ lookupVariable ident valueMap (compilePosition pos)
-     exprInStatement $ compileAssign expr type_ ptr
+     exprInStatement $ compileAssign pos expr type_ ptr
 
-compileStmt (AbsLatte.Decl position type_ decls)=
+compileStmt (AbsLatte.Decl position type_ decls) =
    do lift3 $ checkNotVoid type_ (CE.CEVoidDeclaration (compilePosition position))
       ptrs <- exprInStatement $ mapM go decls
       mapM_ (\ (decl, ptr) -> setVariableM (getIdent decl) llvmType ptr) (zip decls ptrs)
@@ -203,8 +204,8 @@ compileStmt (AbsLatte.Decl position type_ decls)=
       getIdent (AbsLatte.Init _ ident _) = ident
       getIdent (AbsLatte.NoInit _ ident) = ident
 
-      storeValue (AbsLatte.Init _ _ expr) ptr =
-        compileAssign expr llvmType ptr
+      storeValue (AbsLatte.Init itemPos _ expr) ptr =
+        compileAssign itemPos expr llvmType ptr
       storeValue (AbsLatte.NoInit _ _) ptr =
         emitInstruction $ LLVM.IStore llvmType (defaultValue llvmType) llvmType ptr
 
@@ -217,9 +218,9 @@ compileStmt (AbsLatte.Decl position type_ decls)=
 compileStmt (AbsLatte.BStmt _ (AbsLatte.Block _ stmts)) =
   exprInStatement $ statementInExpr $ mapM_ compileStmt stmts -- TODO: refactor
 
-compileStmt (AbsLatte.Cond _ expr stmt1) =
+compileStmt (AbsLatte.Cond position expr stmt1) =
   do (cond, type_) <- exprInStatement $ compileExpr expr
-     lift3 $ checkType type_ LLVM.Ti1 "if condition"
+     lift3 $ checkType position LLVM.Ti1 type_ "if condition"
      ifTrueBlock <- getNextLabelE
      contBlock <- getNextLabelE
      emitInstruction $ LLVM.IBrCond LLVM.Ti1 cond ifTrueBlock contBlock
@@ -227,9 +228,9 @@ compileStmt (AbsLatte.Cond _ expr stmt1) =
      exprInStatement $ compileFlowBlock stmt1 contBlock
      emitInstruction $ LLVM.ILabel contBlock
 
-compileStmt (AbsLatte.CondElse _ expr stmt1 stmt2) =
+compileStmt (AbsLatte.CondElse pos expr stmt1 stmt2) =
   do (cond, type_) <- exprInStatement $ compileExpr expr
-     lift3 $ checkType type_ LLVM.Ti1 "if-else condition"
+     lift3 $ checkType pos LLVM.Ti1 type_ "if-else condition"
      ifTrueBlock <- getNextLabelE
      ifElseBlock <- getNextLabelE
      contBlock <- getNextLabelE
@@ -240,7 +241,7 @@ compileStmt (AbsLatte.CondElse _ expr stmt1 stmt2) =
      exprInStatement $ compileFlowBlock stmt2 contBlock
      emitInstruction $ LLVM.ILabel contBlock
 
-compileStmt (AbsLatte.While _ expr stmt) =
+compileStmt (AbsLatte.While position expr stmt) =
   do condBlock <- getNextLabelE
      bodyBlock <- getNextLabelE
      contBlock <- getNextLabelE
@@ -249,7 +250,7 @@ compileStmt (AbsLatte.While _ expr stmt) =
      exprInStatement $ compileFlowBlock stmt condBlock
      emitInstruction $ LLVM.ILabel condBlock
      (cond, type_) <- exprInStatement $ compileExpr expr
-     lift3 $ checkType type_ LLVM.Ti1 "while loop condition"
+     lift3 $ checkType position LLVM.Ti1 type_ "while loop condition"
      emitInstruction $ LLVM.IBrCond LLVM.Ti1 cond bodyBlock contBlock
      emitInstruction $ LLVM.ILabel contBlock
 
@@ -257,7 +258,7 @@ compileIncrDecrHelper :: Position -> AbsLatte.CIdent -> LLVM.ArithmOp -> Stateme
 compileIncrDecrHelper pos ident arithmOp =
   do valueMap <- readValueMapS
      (type_, ptr) <- lift3 $ lookupVariable ident valueMap (compilePosition pos)
-     lift3 $ checkType LLVM.Ti32 type_ "incrementation (must be int)"
+     lift3 $ checkType pos LLVM.Ti32 type_ "incrementation"
      operand <- getNextRegisterE
      result <- getNextRegisterE
      emitInstruction $ LLVM.ILoad LLVM.Ti32 LLVM.Ti32 ptr operand
@@ -277,7 +278,8 @@ compileExpr (AbsLatte.EApp pos ident args) =
      signatures <- readSignatures
      (LLVM.FunctionType expectedArgTypes retType) <- lift3 $ getType ident signatures (compilePosition pos)
      let argTypes = map snd compiledArgs
-     mapM_ (\ (num, actType, expType) -> (lift3 $ checkType actType expType ("argument " ++ show num ++ " in function call")))
+     mapM_ (\ (num, actType, expType) ->
+              (lift3 $ checkType pos expType actType ("argument " ++ show num ++ " in function call")))
            (zip3 [(1::Int)..] argTypes expectedArgTypes)
      when (length argTypes /= length expectedArgTypes) (
         lift3 $ CE.raise $ CE.CEWrongNumberOfFunctionArguments
@@ -311,24 +313,24 @@ compileExpr (AbsLatte.EString _ string) =
 
     unescape = id
 
-compileExpr (AbsLatte.Neg _ expr) =
+compileExpr (AbsLatte.Neg pos expr) =
   do (value, type_) <- compileExpr expr
-     lift3 $ checkType type_ LLVM.Ti32 "negation (integer required)"
+     lift3 $ checkType pos LLVM.Ti32 type_ "negation"
      res <- getNextRegisterE
      emitInstruction $ LLVM.IArithm LLVM.Ti32 (LLVM.VConst 0) value LLVM.OSub res
      return (LLVM.VRegister res, LLVM.Ti32)
 
-compileExpr (AbsLatte.Not _ expr) =
+compileExpr (AbsLatte.Not pos expr) =
   do (value, type_) <- compileExpr expr
-     lift3 $ checkType type_ LLVM.Ti1 "boolean not (boolean required)"
+     lift3 $ checkType pos LLVM.Ti1 type_ "boolean not"
      res <- getNextRegisterE
      emitInstruction $ LLVM.IIcmp LLVM.RelOpEQ LLVM.Ti1 LLVM.VFalse value res
      return (LLVM.VRegister res, LLVM.Ti1)
 
-compileExpr (AbsLatte.EAnd _ expr1 expr2) =
-  compileBooleanOpHelper LLVM.VFalse expr1 expr2
-compileExpr (AbsLatte.EOr _ expr1 expr2) =
-  compileBooleanOpHelper LLVM.VTrue expr1 expr2
+compileExpr (AbsLatte.EAnd pos expr1 expr2) =
+  compileBooleanOpHelper pos LLVM.VFalse expr1 expr2
+compileExpr (AbsLatte.EOr pos expr1 expr2) =
+  compileBooleanOpHelper pos LLVM.VTrue expr1 expr2
 
 compileExpr (AbsLatte.EAdd pos exp1 addOp exp2) =
   compileArithm pos exp1 (compileAddOperator addOp) exp2
@@ -402,13 +404,14 @@ compileArithm position exp1 op exp2 =
         [] -> CE.raise $ CE.CEInvalidBinaryOp (compilePosition position) type1 op type2
         (_, _, _, retType, instr) : _ -> return (retType, instr)
 
-compileBooleanOpHelper :: LLVM.Value
+compileBooleanOpHelper :: Position
+                          -> LLVM.Value
                           -> AbsLatte.Expr Position
                           -> AbsLatte.Expr Position
                           -> ExprM (LLVM.Value, LLVM.Type)
-compileBooleanOpHelper skipValue expr1 expr2 =
+compileBooleanOpHelper position skipValue expr1 expr2 =
   do (val1, type1) <- compileExpr expr1
-     lift3 $ checkType type1 LLVM.Ti1 "first operand in && expression"
+     lift3 $ checkType position LLVM.Ti1 type1 "first operand in && expression"
      expr2Block <- getNextLabelE
      andEndBlock <- getNextLabelE
      expr1Block <- getCurrentBlock
@@ -416,7 +419,7 @@ compileBooleanOpHelper skipValue expr1 expr2 =
 
      emitInstruction $ LLVM.ILabel expr2Block
      (val2, type2) <- compileExpr expr2
-     lift3 $ checkType type2 LLVM.Ti1 "second operand in && expression"
+     lift3 $ checkType position LLVM.Ti1 type2 "second operand in && expression"
      emitInstruction $ LLVM.IBr andEndBlock
      expr2Block' <- getCurrentBlock
 
@@ -429,9 +432,10 @@ compileBooleanOpHelper skipValue expr1 expr2 =
                     | skipValue == LLVM.VTrue = f b a
                     | otherwise = error "unreachable"
 
-checkType :: LLVM.Type -> LLVM.Type -> String -> CE.CompilerErrorM ()
-checkType type1 type2 description | type1 == type2 = return ()
-                                  | otherwise = CE.raise $ CE.CETypeError description
+checkType :: Position -> LLVM.Type -> LLVM.Type -> String -> CE.CompilerErrorM ()
+checkType pos expType actType description | expType == actType = return ()
+                                      | otherwise = CE.raise $
+                                          CE.CETypeError (compilePosition pos) expType actType description
 
 checkNotVoid :: AbsLatte.Type Position -> CE.CompilerError -> CE.CompilerErrorM ()
 checkNotVoid (AbsLatte.Void _) ce = CE.raise ce
