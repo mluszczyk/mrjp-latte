@@ -5,15 +5,21 @@ LATTELIB="lattelib.c"
 TEST_TEMPLATE="${TMPDIR}latteXXX"
 TEST_DIR=`mktemp -d "$TEST_TEMPLATE"`
 
-for input_file in examples/my_good/*.lat; do
+# consider adding ../mrjp-tests/good/basic/*.lat
+for input_file in examples/my_good/*.lat ../lattests/good/*.lat; do
+  LAT_DIR=`dirname "$input_file"`
   BASENAME=`basename "$input_file" .lat`
   LLFILE="$TEST_DIR/${BASENAME}.ll"
   CLANG_OUT="$TEST_DIR/${BASENAME}.out"
   LLVM_ANS="$TEST_DIR/${BASENAME}.llans"
-  CORRECT_ANS="examples/my_good/${BASENAME}.output"
+  CORRECT_ANS="${LAT_DIR}/${BASENAME}.output"
   stack exec compile "$input_file" > "$LLFILE"
   clang -Wall -Werror "$LLFILE" "$LATTELIB" -o "$CLANG_OUT"
-  $CLANG_OUT > $LLVM_ANS
+  LLVM_IN="${LAT_DIR}/${BASENAME}.input"
+  if [ ! -f "${LLVM_IN}" ]; then
+    LLVM_IN="/dev/null"
+  fi
+  $CLANG_OUT < "$LLVM_IN" > "$LLVM_ANS"
   diff -q $CORRECT_ANS $LLVM_ANS
 done
 

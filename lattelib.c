@@ -27,8 +27,8 @@ bool strne(const char* str1, const char* str2) {
 }
 
 const char* latte_readString() {
-  char *line;
-  size_t num;
+  char *line = NULL;
+  size_t num = 0;
   size_t res = getline(&line, &num, stdin);
 
   if (res == -1) {
@@ -42,7 +42,7 @@ const char* latte_readString() {
 
 int latte_readInt() {
   int num;
-  scanf("%d", &num);
+  scanf("%d ", &num);  // mind the space!
   return num;
 }
 
