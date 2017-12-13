@@ -8,7 +8,7 @@ import qualified LLVM
 import Control.Monad.Reader
 import Control.Monad.State (StateT, get, put, runStateT)
 import Control.Monad.Writer
-import CompilerErr (CompilerErrorM, raiseCEUndefinedFunction, raiseCEUndefinedVariable)
+import CompilerErr (CompilerErrorM)
 import qualified CompilerErr
 import qualified AbsLatte
 
@@ -158,7 +158,9 @@ newtype NextRegister = NextRegister Int
 
 getType :: FunctionIdent -> Signatures -> CompilerErr.Position -> CompilerErrorM LLVM.FunctionType
 getType ident signatures position =
-  maybe (raiseCEUndefinedFunction ident position)
+  maybe (CompilerErr.raise
+    CompilerErr.CEUndefinedFunction { CompilerErr.ceFunctionIdent = ident
+                                    , CompilerErr.cePosition = position })
   return
   (getMaybeType ident signatures)
 
@@ -263,13 +265,16 @@ setVariable name type_ value (ValueMap valueMap) =
     ValueMap (M.insert name (type_, value) valueMap)
 
 lookupVariable :: VariableIdent -> ValueMap -> CompilerErr.Position -> CompilerErrorM (LLVM.Type, LLVM.Register)
-lookupVariable name (ValueMap valueMap) position =
-    maybe (raiseCEUndefinedVariable name position) return (M.lookup name valueMap)
+lookupVariable ident (ValueMap valueMap) position =
+    maybe (CompilerErr.raise
+     CompilerErr.CEUndefinedVariable { CompilerErr.ceVariableIdent = ident
+                                     , CompilerErr.cePosition = position })
+      return (M.lookup ident valueMap)
 
 setVariableM :: VariableIdent -> LLVM.Type -> LLVM.Register -> StatementM ()
 setVariableM name type_ value =
   do state <- get
-     when (name `elem` ssNewScopeVars state) $ lift3 $ CompilerErr.raiseCERedefinitionOfVariable name
+     when (name `elem` ssNewScopeVars state) $ lift3 $ CompilerErr.raise $ CompilerErr.CERedefinitionOfVariable name
      put $ state { ssValueMap = setVariable name type_ value (ssValueMap state), ssNewScopeVars = name : ssNewScopeVars state }
 
 initValueMap :: ValueMap

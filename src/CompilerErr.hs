@@ -21,33 +21,16 @@ data CompilerError = CEUndefinedVariable { ceVariableIdent :: VariableIdent
                    | CEIncorrectMainFunctionType
                    | CETypeError String
                    | CERedefinitionOfVariable VariableIdent
+                   | CEVoidFunctionArgument { cePosition :: Position
+                                            , ceArgumentNumber :: Int }
+                   | CEVoidDeclaration Position
 
 
 type CompilerErrorM = Either CompilerError
 
-raiseCEUndefinedVariable :: VariableIdent -> Position -> CompilerErrorM a
-raiseCEUndefinedVariable ident position = Left CEUndefinedVariable { ceVariableIdent = ident
-                                                                   , cePosition = position }
 
-raiseCEUndefinedFunction :: FunctionIdent -> Position -> CompilerErrorM a
-raiseCEUndefinedFunction ident position = Left CEUndefinedFunction { ceFunctionIdent = ident
-                                                                   , cePosition = position }
-
-raiseCEDuplicatedFunctionDeclaration :: FunctionIdent -> Position -> CompilerErrorM a
-raiseCEDuplicatedFunctionDeclaration ident position = Left CEDuplicatedFunctionDeclaration { ceFunctionIdent = ident
-                                                                                           , cePosition = position }
-
-raiseCEMissingMainFunction :: CompilerErrorM a
-raiseCEMissingMainFunction = Left CEMissingMainFunction
-
-raiseCEIncorrectMainFunctionType :: CompilerErrorM a
-raiseCEIncorrectMainFunctionType = Left CEIncorrectMainFunctionType
-
-raiseCETypeError :: String -> CompilerErrorM a
-raiseCETypeError string = Left $ CETypeError string
-
-raiseCERedefinitionOfVariable :: VariableIdent -> CompilerErrorM a
-raiseCERedefinitionOfVariable ident = Left $ CERedefinitionOfVariable ident
+raise :: CompilerError -> CompilerErrorM a
+raise = Left
 
 showPosition :: Position -> String
 showPosition position = "on line " ++ show (row position) ++ " column " ++ show (column position)
@@ -70,6 +53,11 @@ errorToString CEIncorrectMainFunctionType = "incorrect type of main function; sh
 errorToString (CETypeError description) = "type error in " ++ description
 errorToString (CERedefinitionOfVariable ident) =
   "variable " ++ showVariableIdent ident ++ " redefined"
+errorToString (CEVoidDeclaration position) =
+  "void variable declaration " ++ showPosition position
+errorToString (CEVoidFunctionArgument position argNum) =
+  "void expression passed to a function as argument " ++ show argNum ++ " " ++
+  showPosition position
 
 showVariableIdent :: VariableIdent -> String
 showVariableIdent (AbsLatte.CIdent string) = string

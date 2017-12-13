@@ -4,8 +4,7 @@ module CompileLatte (compileLatte, Position) where
 
 import qualified Data.Map as M
 import qualified AbsLatte
-import CompilerErr (CompilerErrorM)
-import qualified CompilerErr
+import qualified CompilerErr as CE
 import Control.Monad (foldM, when)
 import Data.Tuple (swap)
 
@@ -49,33 +48,35 @@ mainFunctionType = LLVM.FunctionType [] LLVM.Ti32
 
 type Position = Maybe (Int, Int)
 
-checkDuplicateIdents :: [(AbsLatte.CIdent, CompilerErr.Position)] -> Maybe (AbsLatte.CIdent, CompilerErr.Position)
+checkDuplicateIdents :: [(AbsLatte.CIdent, CE.Position)] -> Maybe (AbsLatte.CIdent, CE.Position)
 checkDuplicateIdents idents = case
   M.toList (M.filter (\l -> length l >= 2) (M.fromListWith (++) (map (\ (a, b) -> (a, [b])) idents))) of
     [] -> Nothing
     (str, pos : _) : _ -> Just (str, pos)
     ((_, []):_) -> error "unreachable"
 
-checkDuplicateFnDefs :: [AbsLatte.TopDef Position] -> CompilerErrorM ()
+checkDuplicateFnDefs :: [AbsLatte.TopDef Position] -> CE.CompilerErrorM ()
 checkDuplicateFnDefs topDefs = case checkDuplicateIdents positions of
     Nothing -> return ()
-    Just (ident, pos) -> CompilerErr.raiseCEDuplicatedFunctionDeclaration ident pos
+    Just (ident, pos) -> CE.raise
+        CE.CEDuplicatedFunctionDeclaration { CE.ceFunctionIdent =  ident
+                                                    , CE.cePosition = pos }
   where
-    positions = [(ident, CompilerErr.builtinPosition) | (ident, _) <- builtins] ++
+    positions = [(ident, CE.builtinPosition) | (ident, _) <- builtins] ++
                 map getPositionPair topDefs
     getPositionPair (AbsLatte.FnDef position _ ident _ _) =
       (ident, compilePosition position)
 
-compilePosition :: Position -> CompilerErr.Position
+compilePosition :: Position -> CE.Position
 compilePosition Nothing = error "unknown position passed"
 compilePosition (Just (x, y)) =
-  CompilerErr.Position { CompilerErr.row = x, CompilerErr.column = y}
+  CE.Position { CE.row = x, CE.column = y}
 
-checkMainSignature :: Signatures -> CompilerErrorM ()
+checkMainSignature :: Signatures -> CE.CompilerErrorM ()
 checkMainSignature signatures =
   case getMaybeType mainFunctionName signatures of
-    Nothing -> CompilerErr.raiseCEMissingMainFunction
-    Just type_ | type_ /= mainFunctionType -> CompilerErr.raiseCEIncorrectMainFunctionType
+    Nothing -> CE.raise CE.CEMissingMainFunction
+    Just type_ | type_ /= mainFunctionType -> CE.raise CE.CEIncorrectMainFunctionType
     _ -> return ()
 
 collectSignatures :: [AbsLatte.TopDef Position] -> Signatures
@@ -96,7 +97,7 @@ compileType (AbsLatte.Bool _) = LLVM.Ti1
 compileType (AbsLatte.Str _) = LLVM.Ti8Ptr
 compileType AbsLatte.Fun {} = error "unreachable"
 
-compileLatte :: AbsLatte.Program Position -> CompilerErrorM String
+compileLatte :: AbsLatte.Program Position -> CE.CompilerErrorM String
 compileLatte (AbsLatte.Program _ topDefs) =
    do checkDuplicateFnDefs topDefs
       let signatures = collectSignatures topDefs
@@ -115,11 +116,12 @@ compileLatte (AbsLatte.Program _ topDefs) =
          builtinToLLVM (ident, type_) = (compileFuncIdent ident, type_)
 
 compileFunc :: Signatures -> AbsLatte.TopDef Position -> ConstCounter
-      -> CompilerErrorM (LLVM.Function, [LLVM.Constant], ConstCounter)
+      -> CE.CompilerErrorM (LLVM.Function, [LLVM.Constant], ConstCounter)
 compileFunc signatures (AbsLatte.FnDef _ type_ ident args (AbsLatte.Block _ stmts)) constCounter0 =
    do
-      mapM_ (\ (num, AbsLatte.Arg _ argType _) ->
-            checkNotVoid argType $ "invalid void function argument at position " ++ show num)
+      mapM_ (\ (num, AbsLatte.Arg position argType _) ->
+            checkNotVoid argType CE.CEVoidFunctionArgument { CE.cePosition = compilePosition position
+                                                           , CE.ceArgumentNumber = num })
             (zip [(1 :: Int)..] args)
       (_, instrs, globals, _, _, _, constCounter1) <- runStatementM signatures (LLVM.Label 0) initNewScopeVars initValueMap initNextRegister constCounter0 makeBody
       return (LLVM.Function (compileType type_) (compileFuncIdent ident) llvmArgs instrs, globals, constCounter1)
@@ -189,8 +191,8 @@ compileStmt (AbsLatte.Ass pos ident expr) =
      (type_, ptr) <- lift3 $ lookupVariable ident valueMap (compilePosition pos)
      exprInStatement $ compileAssign expr type_ ptr
 
-compileStmt (AbsLatte.Decl _ type_ decls)=
-   do lift3 $ checkNotVoid type_ "void variable declarations illegal"
+compileStmt (AbsLatte.Decl position type_ decls)=
+   do lift3 $ checkNotVoid type_ (CE.CEVoidDeclaration (compilePosition position))
       ptrs <- exprInStatement $ mapM go decls
       mapM_ (\ (decl, ptr) -> setVariableM (getIdent decl) llvmType ptr) (zip decls ptrs)
 
@@ -276,7 +278,7 @@ compileExpr (AbsLatte.EApp pos ident args) =
      let argTypes = map snd compiledArgs
      mapM_ (\ (num, actType, expType) -> (lift3 $ checkType actType expType ("argument " ++ show num ++ " in function call")))
            (zip3 [(1::Int)..] argTypes expectedArgTypes)
-     when (length argTypes /= length expectedArgTypes) (lift3 $ CompilerErr.raiseCETypeError "wrong number of function arguments")
+     when (length argTypes /= length expectedArgTypes) (lift3 $ CE.raise $ CE.CETypeError "wrong number of function arguments")
      if retType == LLVM.Tvoid then do
        emitInstruction $ LLVM.ICall retType (compileFuncIdent ident) (map swap compiledArgs) Nothing
        return (LLVM.VConst 0, retType)
@@ -396,7 +398,7 @@ compileArithm exp1 op exp2 =
   where
     getInstr type1 type2 =
       case filter (\ (a, b, c, _, _) -> (a, b, c) == (type1, op, type2)) operations of
-        [] -> CompilerErr.raiseCETypeError "incorrect binary operation"
+        [] -> CE.raise $ CE.CETypeError "incorrect binary operation"
         (_, _, _, retType, instr) : _ -> return (retType, instr)
 
 compileBooleanOpHelper :: LLVM.Value
@@ -426,12 +428,12 @@ compileBooleanOpHelper skipValue expr1 expr2 =
                     | skipValue == LLVM.VTrue = f b a
                     | otherwise = error "unreachable"
 
-checkType :: LLVM.Type -> LLVM.Type -> String -> CompilerErrorM ()
+checkType :: LLVM.Type -> LLVM.Type -> String -> CE.CompilerErrorM ()
 checkType type1 type2 description | type1 == type2 = return ()
-                                  | otherwise = CompilerErr.raiseCETypeError description
+                                  | otherwise = CE.raise $ CE.CETypeError description
 
-checkNotVoid :: AbsLatte.Type Position -> String -> CompilerErrorM ()
-checkNotVoid (AbsLatte.Void _) description = CompilerErr.raiseCETypeError description
+checkNotVoid :: AbsLatte.Type Position -> CE.CompilerError -> CE.CompilerErrorM ()
+checkNotVoid (AbsLatte.Void _) ce = CE.raise ce
 checkNotVoid _ _ = return ()
 
 compileAddOperator :: AbsLatte.AddOp a -> Operation
