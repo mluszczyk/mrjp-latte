@@ -2,35 +2,39 @@
 
 module CompilerErr where
 
+import qualified AbsLatte
+type VariableIdent = AbsLatte.CIdent
+type FunctionIdent = AbsLatte.CIdent
+
 data Position = Position { row :: Int
                          , column :: Int }
 builtinPosition :: Position
 builtinPosition = Position { row = -1 , column = -1 }
 
-data CompilerError = CEUndefinedVariable { ceIdent :: String
+data CompilerError = CEUndefinedVariable { ceVariableIdent :: VariableIdent
                                          , cePosition :: Position }
-                   | CEUndefinedFunction { ceIdent :: String
+                   | CEUndefinedFunction { ceFunctionIdent :: FunctionIdent
                                          , cePosition :: Position }
-                   | CEDuplicatedFunctionDeclaration { ceIdent :: String
+                   | CEDuplicatedFunctionDeclaration { ceFunctionIdent :: FunctionIdent
                                                      , cePosition :: Position }
                    | CEMissingMainFunction
                    | CEIncorrectMainFunctionType
                    | CETypeError String
-                   | CERedefinitionOfVariable String
+                   | CERedefinitionOfVariable VariableIdent
 
 
 type CompilerErrorM = Either CompilerError
 
-raiseCEUndefinedVariable :: String -> Position -> CompilerErrorM a
-raiseCEUndefinedVariable ident position = Left CEUndefinedVariable { ceIdent = ident
+raiseCEUndefinedVariable :: VariableIdent -> Position -> CompilerErrorM a
+raiseCEUndefinedVariable ident position = Left CEUndefinedVariable { ceVariableIdent = ident
                                                                    , cePosition = position }
 
-raiseCEUndefinedFunction :: String -> Position -> CompilerErrorM a
-raiseCEUndefinedFunction ident position = Left CEUndefinedFunction { ceIdent = ident
+raiseCEUndefinedFunction :: FunctionIdent -> Position -> CompilerErrorM a
+raiseCEUndefinedFunction ident position = Left CEUndefinedFunction { ceFunctionIdent = ident
                                                                    , cePosition = position }
 
-raiseCEDuplicatedFunctionDeclaration :: String -> Position -> CompilerErrorM a
-raiseCEDuplicatedFunctionDeclaration ident position = Left CEDuplicatedFunctionDeclaration { ceIdent = ident
+raiseCEDuplicatedFunctionDeclaration :: FunctionIdent -> Position -> CompilerErrorM a
+raiseCEDuplicatedFunctionDeclaration ident position = Left CEDuplicatedFunctionDeclaration { ceFunctionIdent = ident
                                                                                            , cePosition = position }
 
 raiseCEMissingMainFunction :: CompilerErrorM a
@@ -42,26 +46,33 @@ raiseCEIncorrectMainFunctionType = Left CEIncorrectMainFunctionType
 raiseCETypeError :: String -> CompilerErrorM a
 raiseCETypeError string = Left $ CETypeError string
 
-raiseCERedefinitionOfVariable :: String -> CompilerErrorM a
-raiseCERedefinitionOfVariable string = Left $ CERedefinitionOfVariable string
+raiseCERedefinitionOfVariable :: VariableIdent -> CompilerErrorM a
+raiseCERedefinitionOfVariable ident = Left $ CERedefinitionOfVariable ident
 
 showPosition :: Position -> String
 showPosition position = "on line " ++ show (row position) ++ " column " ++ show (column position)
 
 errorToString :: CompilerError -> String
-errorToString CEUndefinedVariable { ceIdent = ident
+errorToString CEUndefinedVariable { ceVariableIdent = ident
                                   , cePosition = position }
- = "undefined variable " ++ ident ++ " " ++ showPosition position
+ = "undefined variable " ++ showVariableIdent ident ++ " " ++ showPosition position
 
-errorToString CEUndefinedFunction { ceIdent = ident
+errorToString CEUndefinedFunction { ceFunctionIdent = ident
                                    , cePosition = position }
-  = "undefined function " ++ ident ++ " " ++ showPosition position
+  = "undefined function " ++ showFunctionIdent ident ++ " " ++ showPosition position
 
-errorToString CEDuplicatedFunctionDeclaration { ceIdent = ident
+errorToString CEDuplicatedFunctionDeclaration { ceFunctionIdent = ident
                                               , cePosition = position }
-  = "duplicated declaration of function " ++ ident ++ " " ++ showPosition position
+  = "duplicated declaration of function " ++ showFunctionIdent ident ++ " " ++ showPosition position
 
 errorToString CEMissingMainFunction = "main function not declared"
 errorToString CEIncorrectMainFunctionType = "incorrect type of main function; should return int and take no arguments"
 errorToString (CETypeError description) = "type error in " ++ description
-errorToString (CERedefinitionOfVariable name) = "variable " ++ name ++ " redefined"
+errorToString (CERedefinitionOfVariable ident) =
+  "variable " ++ showVariableIdent ident ++ " redefined"
+
+showVariableIdent :: VariableIdent -> String
+showVariableIdent (AbsLatte.CIdent string) = string
+
+showFunctionIdent :: FunctionIdent -> String
+showFunctionIdent (AbsLatte.CIdent string) = string

@@ -126,4 +126,4 @@ comment    "//" ;
 
 comment    "/*" "*/" ;
 
-position token CIdent (letter (letter | digit | '_')*) ;
+token CIdent (letter (letter | digit | '_')*) ;

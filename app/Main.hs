@@ -12,12 +12,12 @@ import ParLatte
 import AbsLatte
 import ErrM
 
-import CompileLatte (compileLatte)
+import CompileLatte (compileLatte, Position)
 import CompilerErr (errorToString)
 
 type ParseFun a = [Token] -> Err a
 
-run :: ParseFun Program -> String -> IO ()
+run :: ParseFun (Program Position) -> String -> IO ()
 run p s =
    let ts = myLexer s in case p ts of
         Bad descr ->  do hPutStrLn stderr "\nParse              Failed...\n"

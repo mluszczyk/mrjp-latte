@@ -10,13 +10,17 @@ import Control.Monad.State (StateT, get, put, runStateT)
 import Control.Monad.Writer
 import CompilerErr (CompilerErrorM, raiseCEUndefinedFunction, raiseCEUndefinedVariable)
 import qualified CompilerErr
+import qualified AbsLatte
 
+
+type VariableIdent = AbsLatte.CIdent
+type FunctionIdent = AbsLatte.CIdent
 
 newtype StatementEnv = StatementEnv { seSignatures :: Signatures }
 data StatementState = StatementState { ssNextRegister :: NextRegister
                                      , ssConstCounter :: ConstCounter
                                      , ssValueMap :: ValueMap
-                                     , ssNewScopeVars :: [String]
+                                     , ssNewScopeVars :: [VariableIdent]
                                      , ssInstructions :: [LLVM.Instr]
                                      , ssCurrentBlock :: LLVM.Label
                                      }
@@ -148,17 +152,17 @@ lift3 :: (Monad (t m), Monad (t1 (t m)), Monad m, MonadTrans t,
          m a -> t2 (t1 (t m)) a
 lift3 a = lift $ lift $ lift a
 
-newtype ValueMap = ValueMap (M.Map String (LLVM.Type, LLVM.Register))
-newtype Signatures = Signatures (M.Map String LLVM.FunctionType)
+newtype ValueMap = ValueMap (M.Map VariableIdent (LLVM.Type, LLVM.Register))
+newtype Signatures = Signatures (M.Map FunctionIdent LLVM.FunctionType)
 newtype NextRegister = NextRegister Int
 
-getType :: String -> Signatures -> CompilerErr.Position -> CompilerErrorM LLVM.FunctionType
-getType string signatures position =
-  maybe (raiseCEUndefinedFunction string position)
+getType :: FunctionIdent -> Signatures -> CompilerErr.Position -> CompilerErrorM LLVM.FunctionType
+getType ident signatures position =
+  maybe (raiseCEUndefinedFunction ident position)
   return
-  (getMaybeType string signatures)
+  (getMaybeType ident signatures)
 
-getMaybeType :: String -> Signatures -> Maybe LLVM.FunctionType
+getMaybeType :: FunctionIdent -> Signatures -> Maybe LLVM.FunctionType
 getMaybeType string (Signatures signatures) =
   M.lookup string signatures
 
@@ -174,8 +178,8 @@ initConstCounter = ConstCounter 0
 getNextConst :: ConstCounter -> (String, ConstCounter)
 getNextConst (ConstCounter num) = ("string" ++ show num, ConstCounter (num + 1))
 
-runStatementM :: Signatures -> LLVM.Label -> [String] -> ValueMap -> NextRegister -> ConstCounter -> StatementM ()
-    -> CompilerErrorM (LLVM.Label, [LLVM.Instr], [LLVM.Constant], [String], ValueMap, NextRegister, ConstCounter)
+runStatementM :: Signatures -> LLVM.Label -> [VariableIdent] -> ValueMap -> NextRegister -> ConstCounter -> StatementM ()
+    -> CompilerErrorM (LLVM.Label, [LLVM.Instr], [LLVM.Constant], [VariableIdent], ValueMap, NextRegister, ConstCounter)
 runStatementM signatures currentBlock0 newScopeVars0 valueMap0 nextRegister0 constCounter0 monad =
   do (((),
       StatementState { ssNextRegister = nextRegister1
@@ -254,15 +258,15 @@ statementInExpr statementM =
 initNextRegister :: NextRegister
 initNextRegister = NextRegister 0
 
-setVariable :: String -> LLVM.Type -> LLVM.Register -> ValueMap -> ValueMap
+setVariable :: VariableIdent -> LLVM.Type -> LLVM.Register -> ValueMap -> ValueMap
 setVariable name type_ value (ValueMap valueMap) =
     ValueMap (M.insert name (type_, value) valueMap)
 
-lookupVariable :: String -> ValueMap -> CompilerErr.Position -> CompilerErrorM (LLVM.Type, LLVM.Register)
+lookupVariable :: VariableIdent -> ValueMap -> CompilerErr.Position -> CompilerErrorM (LLVM.Type, LLVM.Register)
 lookupVariable name (ValueMap valueMap) position =
     maybe (raiseCEUndefinedVariable name position) return (M.lookup name valueMap)
 
-setVariableM :: String -> LLVM.Type -> LLVM.Register -> StatementM ()
+setVariableM :: VariableIdent -> LLVM.Type -> LLVM.Register -> StatementM ()
 setVariableM name type_ value =
   do state <- get
      when (name `elem` ssNewScopeVars state) $ lift3 $ CompilerErr.raiseCERedefinitionOfVariable name
@@ -271,5 +275,5 @@ setVariableM name type_ value =
 initValueMap :: ValueMap
 initValueMap = ValueMap M.empty
 
-initNewScopeVars :: [String]
+initNewScopeVars :: [VariableIdent]
 initNewScopeVars = []
