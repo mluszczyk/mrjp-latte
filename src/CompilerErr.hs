@@ -64,7 +64,8 @@ errorToString CEDuplicatedFunctionDeclaration { ceFunctionIdent = ident
   = "duplicated declaration of function " ++ showFunctionIdent ident ++ " " ++ showPosition position
 
 errorToString CEMissingMainFunction = "main function not declared"
-errorToString CEIncorrectMainFunctionType = "incorrect type of main function; should return int and take no arguments"
+errorToString CEIncorrectMainFunctionType =
+  "incorrect type of main function; should return int and take no arguments"
 errorToString (CETypeError position expType actType description) =
   "type error in " ++ description ++ " " ++ showPosition position ++
   ", expected " ++ showType expType ++ ", got " ++ showType actType

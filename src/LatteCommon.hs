@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module LatteCommon where
 
 data Operation = Add | Sub | Mul | Div | Mod
