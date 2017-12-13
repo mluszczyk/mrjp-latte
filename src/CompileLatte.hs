@@ -139,12 +139,14 @@ compileFunc signatures (AbsLatte.FnDef _ type_ ident args (AbsLatte.Block _ stmt
           emitInstruction nullRet
 
      saveArgument :: AbsLatte.Arg Position -> StatementM ()
-     saveArgument (AbsLatte.Arg _ argType argIdent) =
+     saveArgument (AbsLatte.Arg pos argType argIdent) =
        do ptr <- getNextRegisterE
           let llvmType = compileType argType
           emitInstruction $ LLVM.IAlloca llvmType ptr
-          emitInstruction $ LLVM.IStore llvmType (LLVM.VRegister $ LLVM.RArgument (compileVariableIdent argIdent)) llvmType ptr
-          setVariableM argIdent llvmType ptr
+          emitInstruction $ LLVM.IStore llvmType
+              (LLVM.VRegister $ LLVM.RArgument (compileVariableIdent argIdent))
+              llvmType ptr
+          setVariableM (compilePosition pos) argIdent llvmType ptr
 
      nullRet | lType == LLVM.Tvoid = LLVM.IRetVoid
              | otherwise = LLVM.IRet lType (defaultValue lType)
@@ -196,13 +198,20 @@ compileStmt (AbsLatte.Ass pos ident expr) =
 compileStmt (AbsLatte.Decl position type_ decls) =
    do lift3 $ checkNotVoid type_ (CE.CEVoidDeclaration (compilePosition position))
       ptrs <- exprInStatement $ mapM go decls
-      mapM_ (\ (decl, ptr) -> setVariableM (getIdent decl) llvmType ptr) (zip decls ptrs)
+      mapM_ (\ (decl, ptr) -> setVariableM
+                  (compilePosition (getDeclPos decl))
+                  (getIdent decl)
+                   llvmType ptr)
+              (zip decls ptrs)
 
    where
       llvmType = compileType type_
 
       getIdent (AbsLatte.Init _ ident _) = ident
       getIdent (AbsLatte.NoInit _ ident) = ident
+
+      getDeclPos (AbsLatte.Init pos _ _) = pos
+      getDeclPos (AbsLatte.NoInit pos _) = pos
 
       storeValue (AbsLatte.Init itemPos _ expr) ptr =
         compileAssign itemPos expr llvmType ptr

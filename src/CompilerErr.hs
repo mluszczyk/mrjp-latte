@@ -28,7 +28,8 @@ data CompilerError = CEUndefinedVariable { ceVariableIdent :: VariableIdent
                                  , ceExpectedType :: Type
                                  , ceActualType :: Type
                                  , ceDescription :: String }
-                   | CERedefinitionOfVariable VariableIdent
+                   | CERedefinitionOfVariable { cePosition :: Position
+                                              , ceVariableIdent :: VariableIdent }
                    | CEVoidFunctionArgument { cePosition :: Position
                                             , ceArgumentNumber :: Int }
                    | CEVoidDeclaration Position
@@ -69,8 +70,9 @@ errorToString CEIncorrectMainFunctionType =
 errorToString (CETypeError position expType actType description) =
   "type error in " ++ description ++ " " ++ showPosition position ++
   ", expected " ++ showType expType ++ ", got " ++ showType actType
-errorToString (CERedefinitionOfVariable ident) =
-  "variable " ++ showVariableIdent ident ++ " redefined"
+errorToString (CERedefinitionOfVariable position ident) =
+  "variable " ++ showVariableIdent ident ++ " redefined " ++
+  showPosition position
 errorToString (CEVoidDeclaration position) =
   "void variable declaration " ++ showPosition position
 errorToString (CEVoidFunctionArgument position argNum) =

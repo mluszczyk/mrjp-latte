@@ -271,11 +271,14 @@ lookupVariable ident (ValueMap valueMap) position =
                                      , CompilerErr.cePosition = position })
       return (M.lookup ident valueMap)
 
-setVariableM :: VariableIdent -> LLVM.Type -> LLVM.Register -> StatementM ()
-setVariableM name type_ value =
+setVariableM :: CompilerErr.Position -> VariableIdent -> LLVM.Type -> LLVM.Register -> StatementM ()
+setVariableM position name type_ value =
   do state <- get
-     when (name `elem` ssNewScopeVars state) $ lift3 $ CompilerErr.raise $ CompilerErr.CERedefinitionOfVariable name
-     put $ state { ssValueMap = setVariable name type_ value (ssValueMap state), ssNewScopeVars = name : ssNewScopeVars state }
+     when (name `elem` ssNewScopeVars state) $
+        lift3 $ CompilerErr.raise $
+        CompilerErr.CERedefinitionOfVariable position name
+     put $ state { ssValueMap = setVariable name type_ value (ssValueMap state)
+                 , ssNewScopeVars = name : ssNewScopeVars state }
 
 initValueMap :: ValueMap
 initValueMap = ValueMap M.empty
