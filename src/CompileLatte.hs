@@ -242,7 +242,7 @@ compileStmt (AbsLatte.Decl position type_ decls) =
               return ptr
 
 compileStmt (AbsLatte.BStmt _ (AbsLatte.Block _ stmts)) =
-  exprInStatement $ statementInExpr $ mapM_ compileStmt stmts -- TODO: refactor
+  exprInStatement $ statementInExpr $ mapM_ compileStmt stmts
 
 compileStmt (AbsLatte.Cond position expr stmt1) =
   do (cond, type_) <- exprInStatement $ compileExpr expr
