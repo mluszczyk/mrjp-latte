@@ -137,7 +137,7 @@ compileFunc signatures (AbsLatte.FnDef _ type_ ident args (AbsLatte.Block _ stmt
             checkNotVoid argType CE.CEVoidFunctionArgument { CE.cePosition = compilePosition position
                                                            , CE.ceArgumentNumber = num })
             (zip [(1 :: Int)..] args)
-      (_, instrs, globals, _, _, _, constCounter1) <- runStatementM signatures (LLVM.Label 0) initNewScopeVars initValueMap initNextRegister constCounter0 makeBody
+      (_, instrs, globals, _, _, _, constCounter1) <- runStatementM signatures (compileType type_) (LLVM.Label 0) initNewScopeVars initValueMap initNextRegister constCounter0 makeBody
       return (LLVM.Function (compileType type_) (compileFuncIdent ident) llvmArgs instrs, globals, constCounter1)
    where
      llvmArgs :: [(LLVM.Type, String)]
@@ -187,8 +187,10 @@ compileAssign position expr ptrType ptr =
      emitInstruction $ LLVM.IStore type_ value type_ ptr
 
 compileStmt :: AbsLatte.Stmt Position -> StatementM ()
-compileStmt (AbsLatte.VRet _) =
-  emitInstruction LLVM.IRetVoid
+compileStmt (AbsLatte.VRet position) =
+  do retType <- readRetType
+     lift3 $ checkType position retType LLVM.Tvoid "return statement"
+     emitInstruction LLVM.IRetVoid
 
 compileStmt (AbsLatte.Incr pos ident) = compileIncrDecrHelper pos ident LLVM.OAdd
 compileStmt (AbsLatte.Decr pos ident) = compileIncrDecrHelper pos ident LLVM.OSub
@@ -199,8 +201,10 @@ compileStmt (AbsLatte.SExp _ expr) =
    do (_, _) <- exprInStatement (compileExpr expr)
       return ()
 
-compileStmt (AbsLatte.Ret _ expr)=
+compileStmt (AbsLatte.Ret position expr)=
   do (value, type_) <- exprInStatement (compileExpr expr)
+     expectedRetType <- readRetType
+     lift3 $ checkType position expectedRetType type_ "return"
      emitInstruction $ LLVM.IRet type_ value
 
 compileStmt (AbsLatte.Ass pos ident expr) =

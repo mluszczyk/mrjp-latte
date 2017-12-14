@@ -16,7 +16,8 @@ import qualified AbsLatte
 type VariableIdent = AbsLatte.CIdent
 type FunctionIdent = AbsLatte.CIdent
 
-newtype StatementEnv = StatementEnv { seSignatures :: Signatures }
+data StatementEnv = StatementEnv { seSignatures :: Signatures
+                                    , seRetType :: LLVM.Type }
 data StatementState = StatementState { ssNextRegister :: NextRegister
                                      , ssConstCounter :: ConstCounter
                                      , ssValueMap :: ValueMap
@@ -28,7 +29,8 @@ type StatementWr = ExprWr
 type StatementM = ReaderT StatementEnv (StateT StatementState (WriterT StatementWr CompilerErrorM))
 
 data ExprEnv  = ExprEnv { erSignatures :: Signatures
-                        , erValueMap :: ValueMap }
+                        , erValueMap :: ValueMap
+                        , erRetType :: LLVM.Type }
 data ExprState = ExprState { esNextRegister :: NextRegister
                            , esConstCounter :: ConstCounter
                            , esInstructions :: [LLVM.Instr]
@@ -52,15 +54,22 @@ instance (CompilerWriter m) => CompilerWriter (StateT a m) where
 
 class (Monad m) => SignatureReader m where
   readSignatures :: m Signatures
+  readRetType :: m LLVM.Type
 
 instance (Monad m) => SignatureReader (ReaderT ExprEnv m) where
   readSignatures = do
     ExprEnv { erSignatures = signatures, erValueMap = _ } <- ask
     return signatures
+  readRetType = do
+    env <- ask
+    return $ erRetType env
 instance (Monad m) => SignatureReader (ReaderT StatementEnv m) where
   readSignatures = do
     StatementEnv { seSignatures = signatures } <- ask
     return signatures
+  readRetType = do
+    env <- ask
+    return $ seRetType env
 
 class (Monad m) => InstructionEmitter m where
   getCurrentBlock :: m LLVM.Label
@@ -180,9 +189,16 @@ initConstCounter = ConstCounter 0
 getNextConst :: ConstCounter -> (String, ConstCounter)
 getNextConst (ConstCounter num) = ("string" ++ show num, ConstCounter (num + 1))
 
-runStatementM :: Signatures -> LLVM.Label -> [VariableIdent] -> ValueMap -> NextRegister -> ConstCounter -> StatementM ()
-    -> CompilerErrorM (LLVM.Label, [LLVM.Instr], [LLVM.Constant], [VariableIdent], ValueMap, NextRegister, ConstCounter)
-runStatementM signatures currentBlock0 newScopeVars0 valueMap0 nextRegister0 constCounter0 monad =
+runStatementM :: Signatures
+                 -> LLVM.Type
+                 -> LLVM.Label
+                 -> [VariableIdent]
+                 -> ValueMap
+                 -> NextRegister
+                 -> ConstCounter
+                 -> StatementM ()
+                 -> CompilerErrorM (LLVM.Label, [LLVM.Instr], [LLVM.Constant], [VariableIdent], ValueMap, NextRegister, ConstCounter)
+runStatementM signatures retType currentBlock0 newScopeVars0 valueMap0 nextRegister0 constCounter0 monad =
   do (((),
       StatementState { ssNextRegister = nextRegister1
                      , ssConstCounter = constCounter1
@@ -192,7 +208,8 @@ runStatementM signatures currentBlock0 newScopeVars0 valueMap0 nextRegister0 con
                      , ssCurrentBlock = currentBlock1 }),
        ExprWr { ewGlobals = globals }) <-
         runWriterT (runStateT (runReaderT monad
-        StatementEnv { seSignatures = signatures })
+        StatementEnv { seSignatures = signatures,
+                       seRetType = retType })
          StatementState { ssNextRegister = nextRegister0
                         , ssConstCounter = constCounter0
                         , ssValueMap = valueMap0
@@ -208,6 +225,7 @@ initInstructions = []
 exprInStatement :: ExprM t -> StatementM t
 exprInStatement exprM =
   do signatures <- readSignatures
+     retType <- readRetType
      StatementState { ssValueMap = valueMap
                     , ssConstCounter = constCounter0
                     , ssNextRegister = nextRegister0
@@ -217,9 +235,11 @@ exprInStatement exprM =
      (res, ExprState { esNextRegister = nextRegister1
                      , esConstCounter = constCounter1
                      , esInstructions = instructions1
-                     , esCurrentBlock = currentBlock1}) <- lift $ lift $
+                     , esCurrentBlock = currentBlock1 }) <- lift $ lift $
          runStateT (runReaderT exprM
-            ExprEnv { erSignatures = signatures, erValueMap = valueMap })
+            ExprEnv { erSignatures = signatures
+                    , erValueMap = valueMap
+                    , erRetType = retType })
             ExprState { esNextRegister = nextRegister0
                       , esConstCounter = constCounter0
                       , esInstructions = instructions0
@@ -234,7 +254,9 @@ exprInStatement exprM =
 
 statementInExpr :: StatementM t -> ExprM t
 statementInExpr statementM =
-  do ExprEnv { erSignatures = signatures, erValueMap = valueMap } <- ask
+  do ExprEnv { erSignatures = signatures
+             , erValueMap = valueMap
+             , erRetType = retType } <- ask
      ExprState { esConstCounter = constCounter0
                , esNextRegister = nextRegister0
                , esInstructions = instructions0
@@ -244,7 +266,8 @@ statementInExpr statementM =
                           , ssInstructions = instructions1
                           , ssCurrentBlock = currentBlock1 }) <- lift $ lift $
          runStateT (runReaderT statementM
-            StatementEnv { seSignatures = signatures })
+            StatementEnv { seSignatures = signatures
+                         , seRetType = retType })
             StatementState { ssNextRegister = nextRegister0
                            , ssConstCounter = constCounter0
                            , ssValueMap = valueMap
