@@ -42,12 +42,6 @@ data CompilerError = CEUndefinedVariable { ceVariableIdent :: VariableIdent
                                        , ceOperation :: LatteCommon.Operation
                                        , ceType2 :: Type }
 
-type CompilerErrorM = Either CompilerError
-
-
-raise :: CompilerError -> CompilerErrorM a
-raise = Left
-
 showPosition :: Position -> String
 showPosition position = "on line " ++ show (row position) ++ " column " ++ show (column position)
 

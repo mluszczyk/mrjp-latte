@@ -8,7 +8,6 @@ import qualified LLVM
 import Control.Monad.Reader
 import Control.Monad.State (StateT, get, put, runStateT)
 import Control.Monad.Writer
-import CompilerErr (CompilerErrorM)
 import qualified CompilerErr
 import qualified AbsLatte
 
@@ -38,6 +37,20 @@ data ExprState = ExprState { esNextRegister :: NextRegister
                            }
 newtype ExprWr = ExprWr { ewGlobals :: [LLVM.Constant] }
 type ExprM =  ReaderT ExprEnv (StateT ExprState (WriterT ExprWr CompilerErrorM))
+
+type CompilerErrorM = Either CompilerErr.CompilerError
+
+class (Monad m) => Raiser m where
+  raise :: CompilerErr.CompilerError -> m a
+
+instance Raiser (Either CompilerErr.CompilerError) where
+  raise = Left
+instance (Raiser m) => Raiser (WriterT ExprWr m) where
+  raise = lift . raise
+instance (Raiser m) => Raiser (StateT a m) where
+  raise = lift . raise
+instance (Raiser m) => Raiser (ReaderT a m) where
+  raise = lift . raise
 
 class (Monad m) => CompilerWriter m where
   emitGlobal :: LLVM.Constant -> m ()
@@ -156,18 +169,13 @@ instance Monoid ExprWr where
      = ExprWr { ewGlobals = globals1 ++ globals2 }
   mempty = ExprWr { ewGlobals = [] }
 
-lift3 :: (Monad (t m), Monad (t1 (t m)), Monad m, MonadTrans t,
-          MonadTrans t1, MonadTrans t2) =>
-         m a -> t2 (t1 (t m)) a
-lift3 a = lift $ lift $ lift a
-
 newtype ValueMap = ValueMap (M.Map VariableIdent (LLVM.Type, LLVM.Register))
 newtype Signatures = Signatures (M.Map FunctionIdent LLVM.FunctionType)
 newtype NextRegister = NextRegister Int
 
-getType :: FunctionIdent -> Signatures -> CompilerErr.Position -> CompilerErrorM LLVM.FunctionType
+getType :: (Raiser m) => FunctionIdent -> Signatures -> CompilerErr.Position -> m LLVM.FunctionType
 getType ident signatures position =
-  maybe (CompilerErr.raise
+  maybe (raise
     CompilerErr.CEUndefinedFunction { CompilerErr.ceFunctionIdent = ident
                                     , CompilerErr.cePosition = position })
   return
@@ -287,9 +295,9 @@ setVariable :: VariableIdent -> LLVM.Type -> LLVM.Register -> ValueMap -> ValueM
 setVariable name type_ value (ValueMap valueMap) =
     ValueMap (M.insert name (type_, value) valueMap)
 
-lookupVariable :: VariableIdent -> ValueMap -> CompilerErr.Position -> CompilerErrorM (LLVM.Type, LLVM.Register)
+lookupVariable :: (Raiser m) => VariableIdent -> ValueMap -> CompilerErr.Position -> m (LLVM.Type, LLVM.Register)
 lookupVariable ident (ValueMap valueMap) position =
-    maybe (CompilerErr.raise
+    maybe (raise
      CompilerErr.CEUndefinedVariable { CompilerErr.ceVariableIdent = ident
                                      , CompilerErr.cePosition = position })
       return (M.lookup ident valueMap)
@@ -298,8 +306,7 @@ setVariableM :: CompilerErr.Position -> VariableIdent -> LLVM.Type -> LLVM.Regis
 setVariableM position name type_ value =
   do state <- get
      when (name `elem` ssNewScopeVars state) $
-        lift3 $ CompilerErr.raise $
-        CompilerErr.CERedefinitionOfVariable position name
+        raise $ CompilerErr.CERedefinitionOfVariable position name
      put $ state { ssValueMap = setVariable name type_ value (ssValueMap state)
                  , ssNewScopeVars = name : ssNewScopeVars state }
 
