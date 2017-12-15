@@ -371,44 +371,63 @@ compileExpr (AbsLatte.EMul pos exp1 mulOp exp2) =
 compileExpr (AbsLatte.ERel pos exp1 relOp exp2) =
   compileArithm pos exp1 (compileRelOp relOp) exp2
 
-operations :: [ (LLVM.Type, LatteCommon.Operation, LLVM.Type, LLVM.Type, LLVM.Value -> LLVM.Value -> LLVM.Register -> LLVM.Instr)]
-operations = [ (LLVM.Ti32, op, LLVM.Ti32, LLVM.Ti32,
-                  \ v1 v2 reg -> LLVM.IArithm LLVM.Ti32 v1 v2 llvmOp reg
-                  )   | (op, llvmOp) <- [ (LatteCommon.Add, LLVM.OAdd)
-                                        , (LatteCommon.Sub, LLVM.OSub)
-                                        , (LatteCommon.Mul, LLVM.OMul)
-                                        , (LatteCommon.Div, LLVM.OSDiv)
-                                        , (LatteCommon.Mod, LLVM.OSRem)
-                                   ]] ++
-              [ (LLVM.Ti8Ptr, LatteCommon.Add, LLVM.Ti8Ptr, LLVM.Ti8Ptr,
-                  \ v1 v2 reg -> LLVM.ICall LLVM.Ti8Ptr concatName
+getOpInst :: LLVM.Type -> LatteCommon.Operation -> LLVM.Type
+             -> Maybe (LLVM.Type, LLVM.Value -> LLVM.Value -> LLVM.Register -> LLVM.Instr)
+getOpInst type1 op type2 = case (type1, op, type2) of
+  ( LLVM.Ti32, LatteCommon.Add, LLVM.Ti32 ) -> arithm
+  ( LLVM.Ti32, LatteCommon.Sub, LLVM.Ti32 ) -> arithm
+  ( LLVM.Ti32, LatteCommon.Mul, LLVM.Ti32 ) -> arithm
+  ( LLVM.Ti32, LatteCommon.Div, LLVM.Ti32 ) -> arithm
+  ( LLVM.Ti32, LatteCommon.Mod, LLVM.Ti32 ) -> arithm
+
+  ( LLVM.Ti8Ptr, LatteCommon.Add, LLVM.Ti8Ptr ) -> concat_
+
+  ( LLVM.Ti32, LatteCommon.LessThan, LLVM.Ti32 ) -> rel
+  ( LLVM.Ti32, LatteCommon.GreaterThan, LLVM.Ti32 ) -> rel
+  ( LLVM.Ti32, LatteCommon.LessEqual, LLVM.Ti32 ) -> rel
+  ( LLVM.Ti32, LatteCommon.GreaterEqual, LLVM.Ti32 ) -> rel
+  ( LLVM.Ti32, LatteCommon.Equal, LLVM.Ti32 ) -> rel
+  ( LLVM.Ti32, LatteCommon.NotEqual, LLVM.Ti32 ) -> rel
+
+  ( LLVM.Ti1, LatteCommon.Equal, LLVM.Ti1 ) -> rel
+  ( LLVM.Ti1, LatteCommon.NotEqual, LLVM.Ti1 ) -> rel
+
+  ( LLVM.Ti8Ptr, LatteCommon.Equal, LLVM.Ti8Ptr ) -> stringRel
+  ( LLVM.Ti8Ptr, LatteCommon.NotEqual, LLVM.Ti8Ptr ) -> stringRel
+
+  _ -> Nothing
+
+  where
+    arithm = Just ( LLVM.Ti32
+             , \ v1 v2 reg -> LLVM.IArithm LLVM.Ti32 v1 v2 arithmOp reg )
+    arithmOp = case op of LatteCommon.Add -> LLVM.OAdd
+                          LatteCommon.Sub -> LLVM.OSub
+                          LatteCommon.Mul -> LLVM.OMul
+                          LatteCommon.Div -> LLVM.OSDiv
+                          LatteCommon.Mod -> LLVM.OSRem
+                          _ -> error "unreachable"
+
+    concat_ = Just ( LLVM.Ti8Ptr
+              , \ v1 v2 reg -> LLVM.ICall LLVM.Ti8Ptr concatName
                            [(LLVM.Ti8Ptr, v1), (LLVM.Ti8Ptr, v2)]
-                           (Just reg)) ] ++
-              [ (LLVM.Ti32, op, LLVM.Ti32, LLVM.Ti1,
-                  LLVM.IIcmp relOp LLVM.Ti32)
-                  | (op, relOp) <- [ (LatteCommon.LessThan, LLVM.RelOpSLT)
-                                   , (LatteCommon.GreaterThan, LLVM.RelOpSGT)
-                                   , (LatteCommon.LessEqual, LLVM.RelOpSLE)
-                                   , (LatteCommon.GreaterEqual, LLVM.RelOpSGE)
-                                   , (LatteCommon.Equal, LLVM.RelOpEQ)
-                                   , (LatteCommon.NotEqual, LLVM.RelOpNE)
-                                   ]
-              ] ++
-              [ (LLVM.Ti1, op, LLVM.Ti1, LLVM.Ti1,
-                  LLVM.IIcmp relOp LLVM.Ti1)
-                  | (op, relOp) <- [ (LatteCommon.Equal, LLVM.RelOpEQ)
-                                   , (LatteCommon.NotEqual, LLVM.RelOpNE)
-                                   ]
-              ] ++
-              [ (LLVM.Ti8Ptr, LatteCommon.Equal, LLVM.Ti8Ptr, LLVM.Ti1,
-                  \ v1 v2 reg -> LLVM.ICall LLVM.Ti1 streqName
+                           (Just reg) )
+
+    rel = Just ( LLVM.Ti1, LLVM.IIcmp relOp type1 )
+    relOp = case op of LatteCommon.LessThan -> LLVM.RelOpSLT
+                       LatteCommon.GreaterThan -> LLVM.RelOpSGT
+                       LatteCommon.LessEqual -> LLVM.RelOpSLE
+                       LatteCommon.GreaterEqual -> LLVM.RelOpSGE
+                       LatteCommon.Equal -> LLVM.RelOpEQ
+                       LatteCommon.NotEqual -> LLVM.RelOpNE
+                       _ -> error "unreachable"
+
+    stringRel = Just ( LLVM.Ti1
+                , \ v1 v2 reg -> LLVM.ICall LLVM.Ti1 strPred
                     [(LLVM.Ti8Ptr, v1), (LLVM.Ti8Ptr, v2)]
-                    (Just reg))
-              , (LLVM.Ti8Ptr, LatteCommon.NotEqual, LLVM.Ti8Ptr, LLVM.Ti1,
-                  \ v1 v2 reg -> LLVM.ICall LLVM.Ti1 strneName
-                    [(LLVM.Ti8Ptr, v1), (LLVM.Ti8Ptr, v2)]
-                    (Just reg))
-              ]
+                    (Just reg) )
+    strPred = case op of LatteCommon.Equal -> streqName
+                         LatteCommon.NotEqual -> strneName
+                         _ -> error "unreachable"
 
 compileRelOp :: AbsLatte.RelOp a -> LatteCommon.Operation
 compileRelOp (AbsLatte.GE _)  = LatteCommon.GreaterEqual
@@ -432,9 +451,9 @@ compileArithm position exp1 op exp2 =
 
   where
     getInstr type1 type2 =
-      case filter (\ (a, b, c, _, _) -> (a, b, c) == (type1, op, type2)) operations of
-        [] -> CE.raise $ CE.CEInvalidBinaryOp (compilePosition position) type1 op type2
-        (_, _, _, retType, instr) : _ -> return (retType, instr)
+      case getOpInst type1 op type2 of
+        Nothing -> CE.raise $ CE.CEInvalidBinaryOp (compilePosition position) type1 op type2
+        Just (retType, instr) -> return (retType, instr)
 
 compileBooleanOpHelper :: Position
                           -> LLVM.Value
