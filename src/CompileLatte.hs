@@ -13,10 +13,8 @@ import Data.Maybe (mapMaybe)
 import qualified LLVM
 import CompilerState
 
-latteMain :: [String]
-latteMain = [ "target triple = \"x86_64-apple-macosx10.13.0\""
-            , "@.str = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1"
-            ]
+llvmHeader :: [String]
+llvmHeader = [ "target triple = \"x86_64-apple-macosx10.13.0\"" ]
 
 builtins :: [(AbsLatte.CIdent, LLVM.FunctionType)]
 builtins = [ (AbsLatte.CIdent "printInt", LLVM.FunctionType [LLVM.Ti32] LLVM.Tvoid)
@@ -119,7 +117,7 @@ compileLatte (AbsLatte.Program _ topDefs) =
       (funcLines, globalsLines, _) <- foldM (go signatures) ([], [emptyStringConst], initConstCounter) topDefs
       let allLines = concatMap LLVM.showFunc funcLines
       return $ unlines $
-        latteMain ++
+        llvmHeader ++
         map LLVM.showGlobal globalsLines ++
         allLines ++
         map (uncurry LLVM.showGlobalDecl) (map builtinToLLVM builtins ++ hiddenBuiltins)
