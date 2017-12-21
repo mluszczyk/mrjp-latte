@@ -28,6 +28,7 @@ data Instr = ICall Type String [(Type, Value)] (Maybe Register)
                | IAlloca Type Register
                | IIcmp Cond Type Value Value Register
                | IPhi Type [(LLVM.Value, LLVM.Label)] Register
+               | IUnreachable
 
 data Cond = RelOpEQ | RelOpNE | RelOpSGT | RelOpSGE | RelOpSLT | RelOpSLE
 
@@ -93,6 +94,7 @@ showInst (IPhi type_ items res) =
   showRegister res ++ " = phi " ++ showType type_ ++ " " ++ intercalate ", " (map
       (\ (value, label) -> "[" ++ showValue value ++ ", %" ++ showLabel label ++ "]")
       items)
+showInst IUnreachable = "unreachable"
 
 showCall :: Type -> String -> [(Type, Value)] -> String
 showCall retType ident args =

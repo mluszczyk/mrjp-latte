@@ -12,4 +12,5 @@ int main() {
   int x = 4;
   (x == 4) || foo();
   (x == 2) || bar() || bar();
+  return 0;
 }

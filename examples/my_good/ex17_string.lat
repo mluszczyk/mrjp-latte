@@ -1,4 +1,5 @@
 int main() {
   string x = "hello";
   printString(x);
+  return 0;
 }

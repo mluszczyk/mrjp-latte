@@ -5,4 +5,5 @@ int main() {
     printInt(a);
   }
   printInt(a);
+  return 0;
 }

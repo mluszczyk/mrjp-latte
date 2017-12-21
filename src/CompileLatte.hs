@@ -147,7 +147,7 @@ compileFunc signatures (AbsLatte.FnDef _ type_ ident args (AbsLatte.Block _ stmt
           emitInstruction $ LLVM.ILabel label
           mapM_ saveArgument args
           mapM_ compileStmt stmts
-          emitInstruction nullRet
+          emitInstruction closeFunc
 
      saveArgument :: AbsLatte.Arg Position -> StatementM ()
      saveArgument (AbsLatte.Arg pos argType argIdent) =
@@ -159,8 +159,8 @@ compileFunc signatures (AbsLatte.FnDef _ type_ ident args (AbsLatte.Block _ stmt
               llvmType ptr
           setVariableM (compilePosition pos) argIdent llvmType ptr
 
-     nullRet | lType == LLVM.Tvoid = LLVM.IRetVoid
-             | otherwise = LLVM.IRet lType (defaultValue lType)
+     closeFunc | lType == LLVM.Tvoid = LLVM.IRetVoid
+               | otherwise = LLVM.IUnreachable
      lType = compileType type_
 
 defaultValue :: LLVM.Type -> LLVM.Value
