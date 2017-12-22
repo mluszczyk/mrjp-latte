@@ -30,4 +30,6 @@ for input_file in examples/my_compiler_err/*.lat ../lattests/bad/*.lat; do
   stack exec compile "$input_file" > "${LLFILE}" 2> "${CERR_FILE}" && { echo "should fail"; exit 1; }
 done
 
+exit 0
+
 # rm -rf "$TEST_DIR"

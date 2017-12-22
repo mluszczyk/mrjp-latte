@@ -25,11 +25,13 @@ library
                        LLVM
                        CompilerState
                        LatteCommon
+                       TransLLVM
   build-depends:       base >= 4.7 && < 5
                      , array
                      , containers
                      , MissingH
                      , mtl
+                     , set-extra
   default-language:    Haskell2010
 
 executable compile

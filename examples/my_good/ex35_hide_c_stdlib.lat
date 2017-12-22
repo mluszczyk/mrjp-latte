@@ -6,6 +6,7 @@ void puts(string x) {
 int strlen(string x) {
   printString("strlen should not be called");
   error();
+  return 0;
 }
 
 void fprintf() {

@@ -11,6 +11,7 @@ import Data.Tuple (swap)
 import Data.Maybe (mapMaybe)
 
 import qualified LLVM
+import qualified TransLLVM
 import CompilerState
 
 llvmHeader :: [String]
@@ -129,14 +130,19 @@ compileLatte (AbsLatte.Program _ topDefs) =
 
 compileFunc :: Signatures -> AbsLatte.TopDef Position -> ConstCounter
       -> CompilerErrorM (LLVM.Function, [LLVM.Constant], ConstCounter)
-compileFunc signatures (AbsLatte.FnDef _ type_ ident args (AbsLatte.Block _ stmts)) constCounter0 =
+compileFunc signatures (AbsLatte.FnDef fPosition type_ ident args (AbsLatte.Block _ stmts)) constCounter0 =
    do
       mapM_ (\ (num, AbsLatte.Arg position argType _) ->
             checkNotVoid argType CE.CEVoidFunctionArgument { CE.cePosition = compilePosition position
                                                            , CE.ceArgumentNumber = num })
             (zip [(1 :: Int)..] args)
       (_, instrs, globals, _, _, _, constCounter1) <- runStatementM signatures (compileType type_) (LLVM.Label 0) initNewScopeVars initValueMap initNextRegister constCounter0 makeBody
-      return (LLVM.Function (compileType type_) (compileFuncIdent ident) llvmArgs instrs, globals, constCounter1)
+      let blocks = TransLLVM.instrsToBlocks instrs
+      let func = TransLLVM.removeUnreachableBlocks $
+           LLVM.Function (compileType type_) (compileFuncIdent ident) llvmArgs blocks
+      when (TransLLVM.hasUnreachableInstruction func) $
+        raise $ CE.CEMissingReturn ident (compilePosition fPosition)
+      return (func, globals, constCounter1)
    where
      llvmArgs :: [(LLVM.Type, String)]
      llvmArgs = map (\ (AbsLatte.Arg _ argType argIdent) -> (compileType argType, compileVariableIdent argIdent)) args

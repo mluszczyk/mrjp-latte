@@ -1,0 +1,10 @@
+int getInt() {
+  return 13;
+}
+
+int main() {
+  if (getInt() == 12) {
+    printString("hello");
+    return 0;
+  }
+}

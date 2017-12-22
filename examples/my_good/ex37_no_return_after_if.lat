@@ -1,0 +1,17 @@
+int getInt() {
+  return 17;
+}
+
+int branch() {
+  int x = getInt();
+  if (x == 13) {
+    return -1;
+  } else {
+    return 1111;
+  }
+}
+
+int main() {
+  printInt(branch());
+  return 0;
+}

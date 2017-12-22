@@ -29,14 +29,23 @@ data Instr = ICall Type String [(Type, Value)] (Maybe Register)
                | IIcmp Cond Type Value Value Register
                | IPhi Type [(LLVM.Value, LLVM.Label)] Register
                | IUnreachable
+               deriving Eq
+
+data Block =  Block { bLabel :: Label
+                    , bInnerInstrs :: [Instr]
+                    , bExitInstr :: Instr }
 
 data Cond = RelOpEQ | RelOpNE | RelOpSGT | RelOpSGE | RelOpSLT | RelOpSLE
+          deriving Eq
 
-newtype Label = Label Int
+newtype Label = Label Int deriving (Eq, Ord)
 
 data FunctionType = FunctionType [Type] Type deriving Eq
-data Function = Function Type String [(Type, String)] [Instr]
-data ArithmOp = OAdd | OSub | OMul | OSDiv | OSRem
+data Function = Function { fType :: Type
+                         , fName :: String
+                         , fArgs :: [(Type, String)]
+                         , fBlocks :: [Block] }
+data ArithmOp = OAdd | OSub | OMul | OSDiv | OSRem deriving Eq
 
 data Constant = Constant Int String String
 
@@ -121,13 +130,18 @@ showCond RelOpEQ = "eq"
 showCond RelOpNE = "ne"
 
 showFunc :: Function -> [String]
-showFunc (Function retType ident args body) =
+showFunc (Function retType ident args blocks) =
           ["define " ++ showType retType ++
           " @" ++ ident ++ "(" ++
           intercalate ", " (map (\ (t, n) -> showType t ++ " " ++ showRegister (RArgument n)) args) ++
           ") {"] ++
-          map (indent . showInst) body ++
+          concatMap showBlock blocks ++
           ["}"]
+
+showBlock :: Block -> [String]
+showBlock (Block label innerInstrs exitInstr) =
+    (showLabel label ++ ":") :
+    map (indent . showInst) (innerInstrs ++ [exitInstr])
 
 showGlobal :: Constant -> String
 showGlobal (Constant size name string) =

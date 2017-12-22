@@ -41,6 +41,8 @@ data CompilerError = CEUndefinedVariable { ceVariableIdent :: VariableIdent
                                        , ceType1 :: Type
                                        , ceOperation :: LatteCommon.Operation
                                        , ceType2 :: Type }
+                   | CEMissingReturn { ceFunctionIdent :: FunctionIdent
+                                     , cePosition :: Position }
 
 showPosition :: Position -> String
 showPosition position = "on line " ++ show (row position) ++ " column " ++ show (column position)
@@ -82,6 +84,9 @@ errorToString (CEInvalidBinaryOp position type1 op type2) =
   "invalid binary operation " ++
   showType type1 ++ showOperator op ++ showType type2 ++
   " " ++ showPosition position
+errorToString (CEMissingReturn ident pos) =
+  "missing return in function " ++ showFunctionIdent ident ++ 
+  " returning non-void " ++ showPosition pos
 
 showVariableIdent :: VariableIdent -> String
 showVariableIdent (AbsLatte.CIdent string) = string
