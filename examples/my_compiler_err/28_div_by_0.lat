@@ -1,0 +1,4 @@
+int main() {
+  printInt(15 / 0);
+  return 0;
+}

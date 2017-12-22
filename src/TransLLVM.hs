@@ -2,9 +2,13 @@
 
 module TransLLVM where
 
+import qualified Data.Map as M
+
 import qualified LLVM
 import qualified Data.Set as S
 import qualified Data.Set.Extra as SE
+import Data.Maybe (fromMaybe)
+import Control.Monad.State (evalState, get, put, State)
 
 instrsToBlocks :: [LLVM.Instr] -> [LLVM.Block]
 instrsToBlocks [] = []
@@ -63,18 +67,87 @@ hasUnreachableInstruction :: LLVM.Function -> Bool
 hasUnreachableInstruction LLVM.Function { LLVM.fBlocks = blocks } =
   any (\ block -> LLVM.bExitInstr block == LLVM.IUnreachable) blocks
 
--- transforms conditional jumps to unconditional jumps
 constantProp :: LLVM.Function -> LLVM.Function
-constantProp = mapBlock (mapExit brCondToBr)
+constantProp function =
+  evalState (mapFuncInstrsM iConstProp (topoSortBlocks function)) M.empty
+
   where
-    mapBlock go function@LLVM.Function { LLVM.fBlocks = blocks } =
-       function { LLVM.fBlocks  = map go blocks }
+    topoSortBlocks :: LLVM.Function -> LLVM.Function
+    topoSortBlocks func = func  -- TODO: implement
+    mapFuncInstrsM :: (Monad m) => (LLVM.Instr -> m LLVM.Instr) -> LLVM.Function -> m LLVM.Function
+    mapFuncInstrsM go func =
+      do
+        blocks <- mapM (mapBlockInstrsM go) (LLVM.fBlocks func)
+        return func { LLVM.fBlocks = blocks }
+    mapBlockInstrsM :: Monad m => (LLVM.Instr -> m LLVM.Instr) -> LLVM.Block -> m LLVM.Block
+    mapBlockInstrsM go block =
+      do
+        instrs <- mapM go (LLVM.bInnerInstrs block)
+        exitInstr <- go (LLVM.bExitInstr block)
+        return block { LLVM.bInnerInstrs = instrs, LLVM.bExitInstr = exitInstr }
 
-    mapExit go block@LLVM.Block { LLVM.bExitInstr = ei } =
-      block { LLVM.bExitInstr = go ei }
+    iConstProp :: LLVM.Instr -> State (M.Map LLVM.Register LLVM.Value) LLVM.Instr
+    iConstProp instr = do
+      transInstr <- mapValInInstrM tryToConst instr
+      case transInstr of
+        LLVM.IArithm LLVM.Ti32 (LLVM.VConst c1) (LLVM.VConst c2) op resultReg -> do
+          storeConst (LLVM.VConst $ eval op c1 c2) resultReg
+          return transInstr
+        LLVM.IBrCond _ val ltrue lfalse -> case val of
+            LLVM.VTrue -> return $ LLVM.IBr ltrue
+            LLVM.VFalse -> return $ LLVM.IBr lfalse
+            _ -> return transInstr
+        _ -> return transInstr
+      where
+        storeConst :: LLVM.Value -> LLVM.Register -> State (M.Map LLVM.Register LLVM.Value) ()
+        storeConst val reg = do
+          store <- get
+          put (M.insert reg val store)
+        eval LLVM.OAdd = (+)
+        eval LLVM.OMul = (*)
+        eval LLVM.OSub = (-)
+        eval LLVM.OSDiv = quot -- TODO: division by 0
+        eval LLVM.OSRem = rem
 
-    brCondToBr instr@(LLVM.IBrCond _ val ltrue lfalse) = case val of
-      LLVM.VTrue -> LLVM.IBr ltrue
-      LLVM.VFalse -> LLVM.IBr lfalse
-      _ -> instr
-    brCondToBr instr = instr
+    tryToConst :: LLVM.Value -> State (M.Map LLVM.Register LLVM.Value) LLVM.Value
+    tryToConst (LLVM.VRegister reg) = do
+      store <- get
+      return $ fromMaybe (LLVM.VRegister reg) (M.lookup reg store)
+    tryToConst somethingElse = return somethingElse
+
+mapValInInstrM :: (Monad m)
+                  => (LLVM.Value
+                  -> m LLVM.Value)
+                  -> LLVM.Instr
+                  -> m LLVM.Instr
+mapValInInstrM go (LLVM.ICall type_ string args mRegister) = do
+  args' <- mapM (\ (t, v) -> do v' <- go v
+                                return (t, v')) args
+  return $ LLVM.ICall type_ string args' mRegister
+mapValInInstrM _ LLVM.IRetVoid = return LLVM.IRetVoid
+mapValInInstrM go (LLVM.IRet type_ val) = do
+  val' <- go val
+  return $ LLVM.IRet type_ val'
+mapValInInstrM _ i@(LLVM.IBr _) = return i
+mapValInInstrM go (LLVM.IBrCond type_ val ltrue lfalse) = do
+  val' <- go val
+  return $ LLVM.IBrCond type_ val' ltrue lfalse
+mapValInInstrM _ i@(LLVM.ILabel _) = return i
+mapValInInstrM _ i@LLVM.ILoad {} = return i
+mapValInInstrM go (LLVM.IStore type1 val type2 reg) = do
+  val' <- go val
+  return (LLVM.IStore type1 val' type2 reg)
+mapValInInstrM _ i@(LLVM.IAlloca _ _) = return i
+mapValInInstrM go (LLVM.IIcmp cond type_ val1 val2 reg) = do
+  val1' <- go val1
+  val2' <- go val2
+  return (LLVM.IIcmp cond type_ val1' val2' reg)
+mapValInInstrM go (LLVM.IPhi type_ pairs reg) = do
+  pairs' <- mapM (\ (val, label) -> do val' <- go val
+                                       return (val', label)) pairs
+  return (LLVM.IPhi type_ pairs' reg)
+mapValInInstrM _ i@LLVM.IUnreachable = return i
+mapValInInstrM go (LLVM.IArithm type_ val1 val2 op resultReg) = do
+  t1 <- go val1
+  t2 <- go val2
+  return $ LLVM.IArithm type_ t1 t2 op resultReg
