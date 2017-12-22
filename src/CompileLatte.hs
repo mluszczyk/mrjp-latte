@@ -206,8 +206,10 @@ compileStmt (AbsLatte.SExp _ expr) =
       return ()
 
 compileStmt (AbsLatte.Ret position expr)=
-  do (value, type_) <- exprInStatement (compileExpr expr)
-     expectedRetType <- readRetType
+  do expectedRetType <- readRetType
+     when (expectedRetType == LLVM.Tvoid) $
+        raise $ CE.CEExprReturnInVoid (compilePosition position)
+     (value, type_) <- exprInStatement (compileExpr expr)
      checkType position expectedRetType type_ "return"
      emitInstruction $ LLVM.IRet type_ value
 

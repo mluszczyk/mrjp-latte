@@ -47,6 +47,7 @@ data CompilerError = CEUndefinedVariable { ceVariableIdent :: VariableIdent
                                              , ceIntLiteral :: Integer
                                              , ceLowerBound :: Integer
                                              , ceUpperBound :: Integer }
+                   | CEExprReturnInVoid { cePosition :: Position }
 
 showPosition :: Position -> String
 showPosition position = "on line " ++ show (row position) ++ " column " ++ show (column position)
@@ -95,6 +96,8 @@ errorToString (CEIntLiteralOutOfBounds pos lit lowerBound upperBound) =
   "int literal " ++ show lit ++ " out of bounds [" ++
   show lowerBound ++ ", " ++ show upperBound ++ "] " ++
   showPosition pos
+errorToString (CEExprReturnInVoid pos) =
+  "return with a value illegal in void function " ++ showPosition pos
 
 showVariableIdent :: VariableIdent -> String
 showVariableIdent (AbsLatte.CIdent string) = string
