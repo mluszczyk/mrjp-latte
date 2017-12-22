@@ -43,6 +43,10 @@ data CompilerError = CEUndefinedVariable { ceVariableIdent :: VariableIdent
                                        , ceType2 :: Type }
                    | CEMissingReturn { ceFunctionIdent :: FunctionIdent
                                      , cePosition :: Position }
+                   | CEIntLiteralOutOfBounds { cePosition :: Position
+                                             , ceIntLiteral :: Integer
+                                             , ceLowerBound :: Integer
+                                             , ceUpperBound :: Integer }
 
 showPosition :: Position -> String
 showPosition position = "on line " ++ show (row position) ++ " column " ++ show (column position)
@@ -85,8 +89,12 @@ errorToString (CEInvalidBinaryOp position type1 op type2) =
   showType type1 ++ showOperator op ++ showType type2 ++
   " " ++ showPosition position
 errorToString (CEMissingReturn ident pos) =
-  "missing return in function " ++ showFunctionIdent ident ++ 
+  "missing return in function " ++ showFunctionIdent ident ++
   " returning non-void " ++ showPosition pos
+errorToString (CEIntLiteralOutOfBounds pos lit lowerBound upperBound) =
+  "int literal " ++ show lit ++ " out of bounds [" ++
+  show lowerBound ++ ", " ++ show upperBound ++ "] " ++
+  showPosition pos
 
 showVariableIdent :: VariableIdent -> String
 showVariableIdent (AbsLatte.CIdent string) = string

@@ -322,7 +322,16 @@ compileExpr (AbsLatte.EApp pos ident args) =
        emitInstruction $ LLVM.ICall retType (compileFuncIdent ident) (map swap compiledArgs) (Just register)
        return (LLVM.VRegister register, retType)
 
-compileExpr (AbsLatte.ELitInt _ int) = return (LLVM.VConst int, LLVM.Ti32)
+compileExpr (AbsLatte.ELitInt pos int) =
+  do
+    when (int < lowerBound || upperBound < int) $
+      raise $ CE.CEIntLiteralOutOfBounds (compilePosition pos)
+       int lowerBound upperBound
+    return (LLVM.VConst int, LLVM.Ti32)
+
+  where
+    lowerBound = -2147483648
+    upperBound = 2147483647
 compileExpr (AbsLatte.ELitTrue _) = return (LLVM.VTrue, LLVM.Ti1)
 compileExpr (AbsLatte.ELitFalse _) = return (LLVM.VFalse, LLVM.Ti1)
 

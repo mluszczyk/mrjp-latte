@@ -23,7 +23,7 @@ for input_file in examples/my_good/*.lat ../lattests/good/*.lat ../mrjp-tests/go
   diff -q $CORRECT_ANS $LLVM_ANS
 done
 
-for input_file in examples/my_compiler_err/*.lat ../lattests/bad/*.lat; do
+for input_file in examples/my_compiler_err/*.lat ../lattests/bad/*.lat ../mrjp-tests/bad/semantic/*; do
   BASENAME=`basename "$input_file" .lat`
   LLFILE="$TEST_DIR/${BASENAME}.ll"
   CERR_FILE="$TEST_DIR/${BASENAME}.compiler-error"
