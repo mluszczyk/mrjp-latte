@@ -48,6 +48,7 @@ data CompilerError = CEUndefinedVariable { ceVariableIdent :: VariableIdent
                                              , ceLowerBound :: Integer
                                              , ceUpperBound :: Integer }
                    | CEExprReturnInVoid { cePosition :: Position }
+                   | CEDivisionByZero
 
 showPosition :: Position -> String
 showPosition position = "on line " ++ show (row position) ++ " column " ++ show (column position)
@@ -98,6 +99,8 @@ errorToString (CEIntLiteralOutOfBounds pos lit lowerBound upperBound) =
   showPosition pos
 errorToString (CEExprReturnInVoid pos) =
   "return with a value illegal in void function " ++ showPosition pos
+errorToString CEDivisionByZero =
+  "division by zero found during optimization"
 
 showVariableIdent :: VariableIdent -> String
 showVariableIdent (AbsLatte.CIdent string) = string

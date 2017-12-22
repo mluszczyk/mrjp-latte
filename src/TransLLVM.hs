@@ -8,7 +8,9 @@ import qualified LLVM
 import qualified Data.Set as S
 import qualified Data.Set.Extra as SE
 import Data.Maybe (fromMaybe)
-import Control.Monad.State (evalState, get, put, State)
+import Control.Monad.State (evalStateT, get, put, StateT, when)
+import qualified CompilerErr as CE
+import qualified CompilerState as CS
 
 instrsToBlocks :: [LLVM.Instr] -> [LLVM.Block]
 instrsToBlocks [] = []
@@ -67,9 +69,11 @@ hasUnreachableInstruction :: LLVM.Function -> Bool
 hasUnreachableInstruction LLVM.Function { LLVM.fBlocks = blocks } =
   any (\ block -> LLVM.bExitInstr block == LLVM.IUnreachable) blocks
 
-constantProp :: LLVM.Function -> LLVM.Function
+type ConstantPropMonad = StateT (M.Map LLVM.Register LLVM.Value) CS.CompilerErrorM
+
+constantProp :: LLVM.Function -> CS.CompilerErrorM LLVM.Function
 constantProp function =
-  evalState (mapFuncInstrsM iConstProp (topoSortBlocks function)) M.empty
+  evalStateT (mapFuncInstrsM iConstProp (topoSortBlocks function)) M.empty
 
   where
     topoSortBlocks :: LLVM.Function -> LLVM.Function
@@ -86,12 +90,13 @@ constantProp function =
         exitInstr <- go (LLVM.bExitInstr block)
         return block { LLVM.bInnerInstrs = instrs, LLVM.bExitInstr = exitInstr }
 
-    iConstProp :: LLVM.Instr -> State (M.Map LLVM.Register LLVM.Value) LLVM.Instr
+    iConstProp :: LLVM.Instr -> ConstantPropMonad LLVM.Instr
     iConstProp instr = do
       transInstr <- mapValInInstrM tryToConst instr
       case transInstr of
         LLVM.IArithm LLVM.Ti32 (LLVM.VConst c1) (LLVM.VConst c2) op resultReg -> do
-          storeConst (LLVM.VConst $ eval op c1 c2) resultReg
+          c <- eval op c1 c2
+          storeConst (LLVM.VConst c) resultReg
           return transInstr
         LLVM.IBrCond _ val ltrue lfalse -> case val of
             LLVM.VTrue -> return $ LLVM.IBr ltrue
@@ -99,17 +104,24 @@ constantProp function =
             _ -> return transInstr
         _ -> return transInstr
       where
-        storeConst :: LLVM.Value -> LLVM.Register -> State (M.Map LLVM.Register LLVM.Value) ()
+        storeConst :: LLVM.Value -> LLVM.Register -> ConstantPropMonad ()
         storeConst val reg = do
           store <- get
           put (M.insert reg val store)
-        eval LLVM.OAdd = (+)
-        eval LLVM.OMul = (*)
-        eval LLVM.OSub = (-)
-        eval LLVM.OSDiv = quot -- TODO: division by 0
-        eval LLVM.OSRem = rem
+        eval :: LLVM.ArithmOp -> Integer -> Integer -> ConstantPropMonad Integer
+        eval LLVM.OAdd a b = return $ a + b
+        eval LLVM.OMul a b = return $ a * b
+        eval LLVM.OSub a b = return $ a - b
+        eval LLVM.OSDiv a b = do
+          when (b == 0) $
+            CS.raise CE.CEDivisionByZero
+          return $ a `quot` b
+        eval LLVM.OSRem a b = do
+          when (b == 0) $
+            CS.raise CE.CEDivisionByZero
+          return $ a `rem` b
 
-    tryToConst :: LLVM.Value -> State (M.Map LLVM.Register LLVM.Value) LLVM.Value
+    tryToConst :: LLVM.Value -> ConstantPropMonad LLVM.Value
     tryToConst (LLVM.VRegister reg) = do
       store <- get
       return $ fromMaybe (LLVM.VRegister reg) (M.lookup reg store)
