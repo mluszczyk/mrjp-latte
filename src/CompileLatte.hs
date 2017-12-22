@@ -138,7 +138,7 @@ compileFunc signatures (AbsLatte.FnDef fPosition type_ ident args (AbsLatte.Bloc
             (zip [(1 :: Int)..] args)
       (_, instrs, globals, _, _, _, constCounter1) <- runStatementM signatures (compileType type_) (LLVM.Label 0) initNewScopeVars initValueMap initNextRegister constCounter0 makeBody
       let blocks = TransLLVM.instrsToBlocks instrs
-      let func = TransLLVM.removeUnreachableBlocks $
+      let func = TransLLVM.removeUnreachableBlocks $ TransLLVM.constantProp $
            LLVM.Function (compileType type_) (compileFuncIdent ident) llvmArgs blocks
       when (TransLLVM.hasUnreachableInstruction func) $
         raise $ CE.CEMissingReturn ident (compilePosition fPosition)

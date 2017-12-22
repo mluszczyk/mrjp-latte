@@ -62,3 +62,19 @@ removeUnreachableBlocks function@LLVM.Function { LLVM.fBlocks = blocks} =
 hasUnreachableInstruction :: LLVM.Function -> Bool
 hasUnreachableInstruction LLVM.Function { LLVM.fBlocks = blocks } =
   any (\ block -> LLVM.bExitInstr block == LLVM.IUnreachable) blocks
+
+-- transforms conditional jumps to unconditional jumps
+constantProp :: LLVM.Function -> LLVM.Function
+constantProp = mapBlock (mapExit brCondToBr)
+  where
+    mapBlock go function@LLVM.Function { LLVM.fBlocks = blocks } =
+       function { LLVM.fBlocks  = map go blocks }
+
+    mapExit go block@LLVM.Block { LLVM.bExitInstr = ei } =
+      block { LLVM.bExitInstr = go ei }
+
+    brCondToBr instr@(LLVM.IBrCond _ val ltrue lfalse) = case val of
+      LLVM.VTrue -> LLVM.IBr ltrue
+      LLVM.VFalse -> LLVM.IBr lfalse
+      _ -> instr
+    brCondToBr instr = instr
