@@ -7,7 +7,7 @@ import qualified Data.Map as M
 import qualified LLVM
 import qualified Data.Set as S
 import qualified Data.Set.Extra as SE
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Control.Monad.State (evalStateT, get, put, StateT, when)
 import qualified CompilerErr as CE
 import qualified CompilerState as CS
@@ -177,3 +177,48 @@ mapValInInstrM go (LLVM.IArithm type_ val1 val2 op resultReg) = do
   t1 <- go val1
   t2 <- go val2
   return $ LLVM.IArithm type_ t1 t2 op resultReg
+
+removeUnusedAssignments :: LLVM.Function -> LLVM.Function
+removeUnusedAssignments function =
+    filterInnerInstrs isUsed
+  where
+    getUsedValues :: LLVM.Instr -> [LLVM.Value]
+    getUsedValues (LLVM.ICall _ _ args _) = map snd args
+    getUsedValues (LLVM.IRet _ val) = [val]
+    getUsedValues (LLVM.IBrCond _ val _ _) = [val]
+    getUsedValues (LLVM.IPhi _ args _) = map fst args
+    getUsedValues (LLVM.IIcmp _ _ v1 v2 _) = [v1, v2]
+    getUsedValues (LLVM.ILoad _ _ val _) = [LLVM.VRegister val]
+    getUsedValues (LLVM.IArithm _ v1 v2 _ _) = [v1, v2]
+    getUsedValues (LLVM.IStore _ v1 _ r2) = [v1, LLVM.VRegister r2]
+    getUsedValues LLVM.IRetVoid = []
+    getUsedValues LLVM.IBr {} = []
+    getUsedValues LLVM.ILabel {} = []
+    getUsedValues LLVM.IAlloca {} = []
+    getUsedValues LLVM.IUnreachable = []
+
+    getUsedRegisters instr = mapMaybe (\ val -> case val of
+      LLVM.VRegister reg -> Just reg
+      _ -> Nothing) (getUsedValues instr)
+
+    usedAssignments :: S.Set LLVM.Register
+    usedAssignments = foldl S.union S.empty ( map (S.fromList . getUsedRegisters) listInstrs)
+
+    isUsed instr = case getMResult instr of
+      Nothing -> True
+      Just reg -> reg `S.member` usedAssignments
+
+    getMResult (LLVM.IArithm _ _ _ _ reg) = Just reg
+    getMResult (LLVM.IIcmp _ _ _ _ reg) = Just reg
+    getMResult (LLVM.IPhi _ _ reg) = Just reg
+    getMResult (LLVM.ILoad _ _ _ reg) = Just reg
+    getMResult (LLVM.IAlloca _ reg) = Just reg
+    getMResult _ = Nothing  -- ICall should return Nothing,
+                            -- mind the side effects!
+
+    listInstrs = concatMap listBlockInstrs (LLVM.fBlocks function)
+    listBlockInstrs block = LLVM.bInnerInstrs block ++ [LLVM.bExitInstr block]
+    filterInnerInstrs shouldStay = function {
+      LLVM.fBlocks = map (removeBlockInnerInstrs shouldStay) (LLVM.fBlocks function) }
+    removeBlockInnerInstrs shouldStay block = block {
+      LLVM.bInnerInstrs = filter shouldStay (LLVM.bInnerInstrs block) }

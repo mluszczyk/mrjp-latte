@@ -143,7 +143,7 @@ compileFunc signatures (AbsLatte.FnDef fPosition type_ ident args (AbsLatte.Bloc
       let func' = TransLLVM.removeUnreachableBlocks func
       when (TransLLVM.hasUnreachableInstruction func') $
         raise $ CE.CEMissingReturn ident (compilePosition fPosition)
-      return (func, globals, constCounter1)
+      return (TransLLVM.removeUnusedAssignments func, globals, constCounter1)
    where
      llvmArgs :: [(LLVM.Type, String)]
      llvmArgs = map (\ (AbsLatte.Arg _ argType argIdent) -> (compileType argType, compileVariableIdent argIdent)) args
