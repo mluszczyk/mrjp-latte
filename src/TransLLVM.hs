@@ -98,6 +98,9 @@ constantProp function =
           c <- eval op c1 c2
           storeConst (LLVM.VConst c) resultReg
           return transInstr
+        LLVM.IIcmp cond LLVM.Ti32 (LLVM.VConst c1) (LLVM.VConst c2) resultReg -> do
+          storeConst (boolToLLVM (evalCond cond c1 c2)) resultReg
+          return transInstr
         LLVM.IBrCond _ val ltrue lfalse -> case val of
             LLVM.VTrue -> return $ LLVM.IBr ltrue
             LLVM.VFalse -> return $ LLVM.IBr lfalse
@@ -120,6 +123,17 @@ constantProp function =
           when (b == 0) $
             CS.raise CE.CEDivisionByZero
           return $ a `rem` b
+        evalCond :: LLVM.Cond -> Integer -> Integer -> Bool
+        evalCond LLVM.RelOpNE = (/=)
+        evalCond LLVM.RelOpEQ = (==)
+        evalCond LLVM.RelOpSGE = (>=)
+        evalCond LLVM.RelOpSGT = (>)
+        evalCond LLVM.RelOpSLE = (<=)
+        evalCond LLVM.RelOpSLT = (<)
+        boolToLLVM :: Bool -> LLVM.Value
+        boolToLLVM True = LLVM.VTrue
+        boolToLLVM False = LLVM.VFalse
+
 
     tryToConst :: LLVM.Value -> ConstantPropMonad LLVM.Value
     tryToConst (LLVM.VRegister reg) = do
