@@ -9,10 +9,9 @@ import qualified Data.Set as S
 import qualified Data.Set.Extra as SE
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Bool (bool)
-import Control.Monad.State (evalStateT, get, put, StateT, when)
+import Control.Monad.State (evalStateT, runState, get, put, StateT, State, when)
 import qualified CompilerErr as CE
 import qualified CompilerState as CS
-import Data.Tuple (swap)
 
 instrsToBlocks :: [LLVM.Instr] -> [LLVM.Block]
 instrsToBlocks [] = []
@@ -45,7 +44,8 @@ isExit instr = case instr of
 removeUnreachableBlocks :: LLVM.Function -> LLVM.Function
 removeUnreachableBlocks function@LLVM.Function { LLVM.fBlocks = blocks} =
   function { LLVM.fBlocks = filter
-      (\ LLVM.Block { LLVM.bLabel = label } -> label `elem` reachable) blocks }
+      (\ LLVM.Block { LLVM.bLabel = label } -> label `elem` reachable)
+      (map (mapBlockInstrs updatePhi) blocks) }
 
   where
     instrNeighbours :: LLVM.Instr -> [LLVM.Label]
@@ -67,6 +67,11 @@ removeUnreachableBlocks function@LLVM.Function { LLVM.fBlocks = blocks} =
     reachable :: S.Set LLVM.Label
     reachable = fix (S.singleton startingLabel)
 
+    updatePhi (LLVM.IPhi t pairs reg) = LLVM.IPhi t newPairs reg
+      where
+        newPairs = filter (\(_, label) -> label `S.member` reachable) pairs
+    updatePhi other = other
+
 hasUnreachableInstruction :: LLVM.Function -> Bool
 hasUnreachableInstruction LLVM.Function { LLVM.fBlocks = blocks } =
   any (\ block -> LLVM.bExitInstr block == LLVM.IUnreachable) blocks
@@ -80,17 +85,6 @@ constantProp function =
   where
     topoSortBlocks :: LLVM.Function -> LLVM.Function
     topoSortBlocks func = func  -- TODO: implement
-    mapFuncInstrsM :: (Monad m) => (LLVM.Instr -> m LLVM.Instr) -> LLVM.Function -> m LLVM.Function
-    mapFuncInstrsM go func =
-      do
-        blocks <- mapM (mapBlockInstrsM go) (LLVM.fBlocks func)
-        return func { LLVM.fBlocks = blocks }
-    mapBlockInstrsM :: Monad m => (LLVM.Instr -> m LLVM.Instr) -> LLVM.Block -> m LLVM.Block
-    mapBlockInstrsM go block =
-      do
-        instrs <- mapM go (LLVM.bInnerInstrs block)
-        exitInstr <- go (LLVM.bExitInstr block)
-        return block { LLVM.bInnerInstrs = instrs, LLVM.bExitInstr = exitInstr }
 
     iConstProp :: LLVM.Instr -> ConstantPropMonad LLVM.Instr
     iConstProp instr = do
@@ -227,46 +221,67 @@ listInstrs :: LLVM.Function -> [LLVM.Instr]
 listInstrs function = concatMap listBlockInstrs (LLVM.fBlocks function)
 listBlockInstrs :: LLVM.Block -> [LLVM.Instr]
 listBlockInstrs block = LLVM.bInnerInstrs block ++ [LLVM.bExitInstr block]
---
--- mem2Reg :: LLVM.Function -> LLVM.Function
--- mem2Reg function = mapBlocks goBlock function
---   where
---
---     goBlock block = do
---       let predLabels = map LLVM.bLabel (predecessors block)
---       newRegisters <- mapM (\ _ -> getNextRegister)
---       let valToReg = M.fromList (zip allocedPtrs newRegisters)
---           newPhis = mapM (\ ((t, a), reg) ->
---             IPhi t [(endReg predLabel a, predLabel)
---                     | predLabel <- predLabels] reg
---           ) (zip allocedPtrs newRegisters)
---           (block', valToReg1) = blockMem2Reg block valToReg1
---           -- replace endReg (block, val) with valToReg1
---
---     predecessors block = filter (jumpsTo block) (LLVM.fBlocks function)
---     jumpsTo blockSrc blockDst = case LLVM.bExitInstr blockSrc of
---       LLVM.IBr dstLabel | LLVM.bLabel blockDst == dstLabel -> True
---       LLVM.IBrCond _ _ dstLabel1 dstLabel2
---         | LLVM.bLabel blockDst == dstLabel1 ||
---           LLVM.bLabel blockDst == dstLabel2 -> True
---       _ -> False
+mapFuncInstrsM :: (Monad m) => (LLVM.Instr -> m LLVM.Instr) -> LLVM.Function -> m LLVM.Function
+mapFuncInstrsM go func =
+  do
+    blocks <- mapM (mapBlockInstrsM go) (LLVM.fBlocks func)
+    return func { LLVM.fBlocks = blocks }
+mapBlockInstrs :: (LLVM.Instr -> LLVM.Instr) -> LLVM.Block -> LLVM.Block
+mapBlockInstrs go block = mapBlockInstrsM (\instr () -> go instr) block ()
+mapBlockInstrsM :: Monad m => (LLVM.Instr -> m LLVM.Instr) -> LLVM.Block -> m LLVM.Block
+mapBlockInstrsM go block =
+  do
+    instrs <- mapM go (LLVM.bInnerInstrs block)
+    exitInstr <- go (LLVM.bExitInstr block)
+    return block { LLVM.bInnerInstrs = instrs, LLVM.bExitInstr = exitInstr }
 
-mem2Reg :: LLVM.Function -> LLVM.Function
-mem2Reg function = mapBlocks goBlock function
+mem2Reg :: LLVM.Function -> CS.NextRegister -> (LLVM.Function, CS.NextRegister)
+mem2Reg function nextRegister0 = (function { LLVM.fBlocks = newBlocks } , nextRegister1)
   where
-    goBlock block =
-      let (block1, rest, _) = blockMem2Reg block (map snd allocedPtrs) M.empty M.empty
-      in storeRest block1 rest
-    mapBlocks go function' =
-      function' { LLVM.fBlocks = map go (LLVM.fBlocks function') }
+    (initVars, nextRegister1) = runState
+          (mapM (\ _ -> mapM (const getNextRegisterM) allocedPtrs)
+          (LLVM.fBlocks function)) nextRegister0
+    getNextRegisterM :: State CS.NextRegister LLVM.Register
+    getNextRegisterM = do
+      state <- get
+      let (reg, newState) = CS.getNextRegister state
+      put newState
+      return reg
+
+    (noMemBlocks, blockPtrValLists) = unzip $ zipWith goBlock (LLVM.fBlocks function) initVars
+    blockPtrVal = M.fromList (zip (map LLVM.bLabel noMemBlocks) blockPtrValLists)
+    blockPhis :: [[LLVM.Instr]]
+    blockPhis = [
+      let predLabels = map LLVM.bLabel (predecessors block)
+      in if null predLabels then [] else
+        map (\ ((t, a), reg) ->
+            LLVM.IPhi t [(blockPtrVal M.! predLabel M.! a, predLabel)
+                    | predLabel <- predLabels] reg
+            ) (zip allocedPtrs blockInitVars)
+      | (block, blockInitVars) <- zip noMemBlocks initVars ]
+    newBlocks = map (\ (block, phis) ->
+      block { LLVM.bInnerInstrs = phis ++ LLVM.bInnerInstrs block} ) $
+      zip noMemBlocks blockPhis
+
+    goBlock block blockInitVars =
+      let
+        ptrRegs = map snd allocedPtrs
+        ptrToVal = if null (predecessors block) then
+          M.fromList (map (\ptr -> (ptr, LLVM.VUndef)) ptrRegs) else
+          M.fromList (zip ptrRegs (map LLVM.VRegister blockInitVars))
+        (block1, rest, _) = blockMem2Reg block ptrRegs ptrToVal M.empty
+      in (block1, rest)
     allocedPtrs = mapMaybe (\ instr -> case instr of
         LLVM.IAlloca t a -> Just (t, a)
         _ -> Nothing) (listInstrs function)
-    ptrType = M.fromList (map swap allocedPtrs)
-    storeRest block rest =
-       let stores = map (\ (ptr, val) -> let t = ptrType M.! ptr in
-                                       LLVM.IStore t val t ptr) (M.toList rest) in
-       block { LLVM.bInnerInstrs = LLVM.bInnerInstrs block ++ stores }
+
+    predecessors dstBlock = filter (`jumpsTo` dstBlock) (LLVM.fBlocks function)
+    jumpsTo blockSrc blockDst = case LLVM.bExitInstr blockSrc of
+      LLVM.IBr dstLabel | LLVM.bLabel blockDst == dstLabel -> True
+      LLVM.IBrCond _ _ dstLabel1 dstLabel2
+        | LLVM.bLabel blockDst == dstLabel1 ||
+          LLVM.bLabel blockDst == dstLabel2 -> True
+      _ -> False
 
 
 blockMem2Reg :: LLVM.Block

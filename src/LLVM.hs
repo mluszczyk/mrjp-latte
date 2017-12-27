@@ -10,6 +10,7 @@ data Value = VConst Integer
                | VTrue
                | VFalse
                | VGetElementPtr Int String
+               | VUndef
                deriving Eq
 
 data Register = Register Int | RArgument String
@@ -57,6 +58,7 @@ showValue VFalse = "0"
 showValue (VGetElementPtr num string) =
   "getelementptr inbounds ([" ++ show num ++ " x i8], [" ++
   show num ++ " x i8]* @" ++ string ++ ", i32 0, i32 0)"
+showValue VUndef = "undef"
 
 showRegister :: Register -> String
 showRegister (Register num) =  "%unnamed_" ++ show num

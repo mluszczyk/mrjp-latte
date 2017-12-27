@@ -136,14 +136,14 @@ compileFunc signatures (AbsLatte.FnDef fPosition type_ ident args (AbsLatte.Bloc
             checkNotVoid argType CE.CEVoidFunctionArgument { CE.cePosition = compilePosition position
                                                            , CE.ceArgumentNumber = num })
             (zip [(1 :: Int)..] args)
-      (_, instrs, globals, _, _, _, constCounter1) <- runStatementM signatures (compileType type_) (LLVM.Label 0) initNewScopeVars initValueMap initNextRegister constCounter0 makeBody
+      (_, instrs, globals, _, _, nextRegister, constCounter1) <-
+        runStatementM signatures (compileType type_) (LLVM.Label 0)
+                      initNewScopeVars initValueMap
+                      initNextRegister constCounter0 makeBody
       let blocks = TransLLVM.instrsToBlocks instrs
-      func <- TransLLVM.constantProp $ TransLLVM.mem2Reg $
-           LLVM.Function (compileType type_) (compileFuncIdent ident) llvmArgs blocks
-      let func' = TransLLVM.removeUnreachableBlocks func
-      when (TransLLVM.hasUnreachableInstruction func') $
-        raise $ CE.CEMissingReturn ident (compilePosition fPosition)
-      return (TransLLVM.removeUnusedAssignments func, globals, constCounter1)
+          rawFunc = LLVM.Function (compileType type_) (compileFuncIdent ident) llvmArgs blocks
+      (func, _) <- optimise rawFunc nextRegister
+      return (func, globals, constCounter1)
    where
      llvmArgs :: [(LLVM.Type, String)]
      llvmArgs = map (\ (AbsLatte.Arg _ argType argIdent) -> (compileType argType, compileVariableIdent argIdent)) args
@@ -169,6 +169,15 @@ compileFunc signatures (AbsLatte.FnDef fPosition type_ ident args (AbsLatte.Bloc
      closeFunc | lType == LLVM.Tvoid = LLVM.IRetVoid
                | otherwise = LLVM.IUnreachable
      lType = compileType type_
+
+     optimise func nextRegister0 = do
+       let (func1, nextRegister1) = TransLLVM.mem2Reg func nextRegister0
+       func2 <- TransLLVM.constantProp func1
+       let func3 = TransLLVM.removeUnreachableBlocks func2
+       when (TransLLVM.hasUnreachableInstruction func3) $
+         raise $ CE.CEMissingReturn ident (compilePosition fPosition)
+       let func4 = TransLLVM.removeUnusedAssignments func3
+       return (func4, nextRegister1)
 
 defaultValue :: LLVM.Type -> LLVM.Value
 defaultValue LLVM.Ti1  = LLVM.VFalse

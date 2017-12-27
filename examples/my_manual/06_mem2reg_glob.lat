@@ -1,0 +1,13 @@
+int fac(int num) {
+  int res = 1;
+  while (num > 0) {
+    res = res * num;
+    num--;
+  }
+  return res;
+}
+
+int main() {
+  printInt(fac(5));
+  return 0;
+}
