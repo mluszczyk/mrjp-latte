@@ -1,0 +1,15 @@
+int foo(int a) {
+  int x = a;
+  int y = a;
+  int z = a + a;
+  x = z;
+  printInt(x);
+  x++;
+  a = x;
+  return a;
+}
+
+int main() {
+  foo(3);
+  return 0;
+}

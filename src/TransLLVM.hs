@@ -8,9 +8,11 @@ import qualified LLVM
 import qualified Data.Set as S
 import qualified Data.Set.Extra as SE
 import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Bool (bool)
 import Control.Monad.State (evalStateT, get, put, StateT, when)
 import qualified CompilerErr as CE
 import qualified CompilerState as CS
+import Data.Tuple (swap)
 
 instrsToBlocks :: [LLVM.Instr] -> [LLVM.Block]
 instrsToBlocks [] = []
@@ -202,7 +204,7 @@ removeUnusedAssignments function =
       _ -> Nothing) (getUsedValues instr)
 
     usedAssignments :: S.Set LLVM.Register
-    usedAssignments = foldl S.union S.empty ( map (S.fromList . getUsedRegisters) listInstrs)
+    usedAssignments = foldl S.union S.empty (map (S.fromList . getUsedRegisters) (listInstrs function))
 
     isUsed instr = case getMResult instr of
       Nothing -> True
@@ -216,9 +218,100 @@ removeUnusedAssignments function =
     getMResult _ = Nothing  -- ICall should return Nothing,
                             -- mind the side effects!
 
-    listInstrs = concatMap listBlockInstrs (LLVM.fBlocks function)
-    listBlockInstrs block = LLVM.bInnerInstrs block ++ [LLVM.bExitInstr block]
     filterInnerInstrs shouldStay = function {
       LLVM.fBlocks = map (removeBlockInnerInstrs shouldStay) (LLVM.fBlocks function) }
     removeBlockInnerInstrs shouldStay block = block {
       LLVM.bInnerInstrs = filter shouldStay (LLVM.bInnerInstrs block) }
+
+listInstrs :: LLVM.Function -> [LLVM.Instr]
+listInstrs function = concatMap listBlockInstrs (LLVM.fBlocks function)
+listBlockInstrs :: LLVM.Block -> [LLVM.Instr]
+listBlockInstrs block = LLVM.bInnerInstrs block ++ [LLVM.bExitInstr block]
+--
+-- mem2Reg :: LLVM.Function -> LLVM.Function
+-- mem2Reg function = mapBlocks goBlock function
+--   where
+--
+--     goBlock block = do
+--       let predLabels = map LLVM.bLabel (predecessors block)
+--       newRegisters <- mapM (\ _ -> getNextRegister)
+--       let valToReg = M.fromList (zip allocedPtrs newRegisters)
+--           newPhis = mapM (\ ((t, a), reg) ->
+--             IPhi t [(endReg predLabel a, predLabel)
+--                     | predLabel <- predLabels] reg
+--           ) (zip allocedPtrs newRegisters)
+--           (block', valToReg1) = blockMem2Reg block valToReg1
+--           -- replace endReg (block, val) with valToReg1
+--
+--     predecessors block = filter (jumpsTo block) (LLVM.fBlocks function)
+--     jumpsTo blockSrc blockDst = case LLVM.bExitInstr blockSrc of
+--       LLVM.IBr dstLabel | LLVM.bLabel blockDst == dstLabel -> True
+--       LLVM.IBrCond _ _ dstLabel1 dstLabel2
+--         | LLVM.bLabel blockDst == dstLabel1 ||
+--           LLVM.bLabel blockDst == dstLabel2 -> True
+--       _ -> False
+
+mem2Reg :: LLVM.Function -> LLVM.Function
+mem2Reg function = mapBlocks goBlock function
+  where
+    goBlock block =
+      let (block1, rest, _) = blockMem2Reg block (map snd allocedPtrs) M.empty M.empty
+      in storeRest block1 rest
+    mapBlocks go function' =
+      function' { LLVM.fBlocks = map go (LLVM.fBlocks function') }
+    allocedPtrs = mapMaybe (\ instr -> case instr of
+        LLVM.IAlloca t a -> Just (t, a)
+        _ -> Nothing) (listInstrs function)
+    ptrType = M.fromList (map swap allocedPtrs)
+    storeRest block rest =
+       let stores = map (\ (ptr, val) -> let t = ptrType M.! ptr in
+                                       LLVM.IStore t val t ptr) (M.toList rest) in
+       block { LLVM.bInnerInstrs = LLVM.bInnerInstrs block ++ stores }
+
+
+blockMem2Reg :: LLVM.Block
+               -> [LLVM.Register]
+               -> M.Map LLVM.Register LLVM.Value
+               -> M.Map LLVM.Register LLVM.Value
+               -> (LLVM.Block, M.Map LLVM.Register LLVM.Value, M.Map LLVM.Register LLVM.Value)
+blockMem2Reg block allocedPtrs ptrVal0 valueUpdate0  =
+  ( block { LLVM.bInnerInstrs = innerInstrs, LLVM.bExitInstr = exitInstr }
+  , ptrVal3
+  , valUpdate3 )
+
+  where
+    (ptrVal3, valUpdate3, innerInstrs) = foldl go (ptrVal0, valueUpdate0, []) (LLVM.bInnerInstrs block)
+    exitInstr = trans valUpdate3 (LLVM.bExitInstr block)
+
+    go :: (M.Map LLVM.Register LLVM.Value, M.Map LLVM.Register LLVM.Value,
+            [LLVM.Instr])
+          -> LLVM.Instr
+          -> (M.Map LLVM.Register LLVM.Value, M.Map LLVM.Register LLVM.Value,
+                [LLVM.Instr])
+    go (ptrVal1, valUpdate1, instrs1) instr =
+      let tInstr = trans valUpdate1 instr
+          (ptrRep, valRep, leaveInstr) = reduceMem ptrVal1 tInstr
+          ptrVal2 = maybe ptrVal1 (\ (ptr, val) -> M.insert ptr val ptrVal1) ptrRep
+          valUpdate2 = maybe valUpdate1 (\ (oldReg, newVal) -> M.insert oldReg newVal valUpdate1) valRep
+          instrs2 = bool instrs1 (instrs1 ++ [tInstr]) leaveInstr
+      in (ptrVal2, valUpdate2, instrs2)
+
+    mapValInInstr :: (LLVM.Value -> LLVM.Value) -> LLVM.Instr -> LLVM.Instr
+    mapValInInstr go' instr = mapValInInstrM (\ val () -> go' val) instr ()
+    trans valUp = mapValInInstr (transVal valUp)
+    transVal valUp (LLVM.VRegister reg) =
+      fromMaybe (LLVM.VRegister reg) (M.lookup reg valUp)
+    transVal _ other = other
+
+    reduceMem :: M.Map LLVM.Register LLVM.Value
+                 -> LLVM.Instr
+                 -> ( Maybe (LLVM.Register, LLVM.Value)
+                    , Maybe (LLVM.Register, LLVM.Value)
+                    , Bool)
+    reduceMem ptrVal1 (LLVM.ILoad _ _ ptrReg loadedReg)
+       | ptrReg `elem` allocedPtrs = case M.lookup ptrReg ptrVal1 of
+      Nothing -> (Nothing, Nothing, True)
+      Just replVal -> (Nothing, Just (loadedReg, replVal), False)
+    reduceMem _ (LLVM.IStore _ val _ ptrReg) | ptrReg `elem` allocedPtrs =
+      (Just (ptrReg, val), Nothing, False)
+    reduceMem _ _ = (Nothing, Nothing, True)
