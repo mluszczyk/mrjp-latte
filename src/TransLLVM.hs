@@ -7,7 +7,7 @@ import qualified Data.Map as M
 import qualified LLVM
 import qualified Data.Set as S
 import qualified Data.Set.Extra as SE
-import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Maybe (fromMaybe, mapMaybe, isNothing)
 import Data.Bool (bool)
 import Control.Monad.State (evalStateT, runState, get, put, StateT, State, when)
 import qualified CompilerErr as CE
@@ -62,15 +62,17 @@ removeUnreachableBlocks function@LLVM.Function { LLVM.fBlocks = blocks} =
     startingLabel = LLVM.bLabel (head blocks)
     follow :: S.Set LLVM.Label -> S.Set LLVM.Label
     follow s = s `S.union` SE.concatMap (S.fromList . neighbours) s
-    fix prev = let next = follow prev in
-      if next == prev then next else fix next
     reachable :: S.Set LLVM.Label
-    reachable = fix (S.singleton startingLabel)
+    reachable = fixEq follow (S.singleton startingLabel)
 
     updatePhi (LLVM.IPhi t pairs reg) = LLVM.IPhi t newPairs reg
       where
         newPairs = filter (\(_, label) -> label `S.member` reachable) pairs
     updatePhi other = other
+
+fixEq :: (Eq a) => (a -> a) -> a -> a
+fixEq follow prev = let next = follow prev in
+  if next == prev then next else fixEq follow next
 
 hasUnreachableInstruction :: LLVM.Function -> Bool
 hasUnreachableInstruction LLVM.Function { LLVM.fBlocks = blocks } =
@@ -174,9 +176,15 @@ mapValInInstrM go (LLVM.IArithm type_ val1 val2 op resultReg) = do
   t2 <- go val2
   return $ LLVM.IArithm type_ t1 t2 op resultReg
 
+mapValInInstr :: (LLVM.Value -> LLVM.Value) -> LLVM.Instr -> LLVM.Instr
+mapValInInstr go instr = mapValInInstrM (\ val () -> go val) instr ()
+
+mapValInFunc :: (LLVM.Value -> LLVM.Value) -> LLVM.Function -> LLVM.Function
+mapValInFunc go = mapFuncInstrs (mapValInInstr go)
+
 removeUnusedAssignments :: LLVM.Function -> LLVM.Function
 removeUnusedAssignments function =
-    filterInnerInstrs isUsed
+    filterInnerInstrs isUsed function
   where
     getUsedValues :: LLVM.Instr -> [LLVM.Value]
     getUsedValues (LLVM.ICall _ _ args _) = map snd args
@@ -212,10 +220,12 @@ removeUnusedAssignments function =
     getMResult _ = Nothing  -- ICall should return Nothing,
                             -- mind the side effects!
 
-    filterInnerInstrs shouldStay = function {
-      LLVM.fBlocks = map (removeBlockInnerInstrs shouldStay) (LLVM.fBlocks function) }
-    removeBlockInnerInstrs shouldStay block = block {
-      LLVM.bInnerInstrs = filter shouldStay (LLVM.bInnerInstrs block) }
+filterInnerInstrs :: (LLVM.Instr -> Bool) -> LLVM.Function -> LLVM.Function
+filterInnerInstrs shouldStay function = function {
+  LLVM.fBlocks = map (removeBlockInnerInstrs shouldStay) (LLVM.fBlocks function) }
+  where
+    removeBlockInnerInstrs shouldStay' block = block {
+      LLVM.bInnerInstrs = filter shouldStay' (LLVM.bInnerInstrs block) }
 
 listInstrs :: LLVM.Function -> [LLVM.Instr]
 listInstrs function = concatMap listBlockInstrs (LLVM.fBlocks function)
@@ -226,6 +236,8 @@ mapFuncInstrsM go func =
   do
     blocks <- mapM (mapBlockInstrsM go) (LLVM.fBlocks func)
     return func { LLVM.fBlocks = blocks }
+mapFuncInstrs :: (LLVM.Instr -> LLVM.Instr) -> LLVM.Function -> LLVM.Function
+mapFuncInstrs go func = mapFuncInstrsM (\ item () -> go item) func ()
 mapBlockInstrs :: (LLVM.Instr -> LLVM.Instr) -> LLVM.Block -> LLVM.Block
 mapBlockInstrs go block = mapBlockInstrsM (\instr () -> go instr) block ()
 mapBlockInstrsM :: Monad m => (LLVM.Instr -> m LLVM.Instr) -> LLVM.Block -> m LLVM.Block
@@ -311,8 +323,6 @@ blockMem2Reg block allocedPtrs ptrVal0 valueUpdate0  =
           instrs2 = bool instrs1 (instrs1 ++ [tInstr]) leaveInstr
       in (ptrVal2, valUpdate2, instrs2)
 
-    mapValInInstr :: (LLVM.Value -> LLVM.Value) -> LLVM.Instr -> LLVM.Instr
-    mapValInInstr go' instr = mapValInInstrM (\ val () -> go' val) instr ()
     trans valUp = mapValInInstr (transVal valUp)
     transVal valUp (LLVM.VRegister reg) =
       fromMaybe (LLVM.VRegister reg) (M.lookup reg valUp)
@@ -330,3 +340,18 @@ blockMem2Reg block allocedPtrs ptrVal0 valueUpdate0  =
     reduceMem _ (LLVM.IStore _ val _ ptrReg) | ptrReg `elem` allocedPtrs =
       (Just (ptrReg, val), Nothing, False)
     reduceMem _ _ = (Nothing, Nothing, True)
+
+removeTrivialPhis :: LLVM.Function -> LLVM.Function
+removeTrivialPhis function =
+   mapValInFunc (\ val -> fromMaybe val (M.lookup val valUpdateFix)) $
+   filterInnerInstrs (isNothing . extractTrivialPhi) function
+  where
+    extractTrivialPhi (LLVM.IPhi _ pairs reg) =
+      case S.toList (S.fromList (map fst pairs)) of
+        [value] -> Just (LLVM.VRegister reg, value)
+        _ -> Nothing
+    extractTrivialPhi _ = Nothing
+
+    valUpdate = M.fromList (mapMaybe extractTrivialPhi (listInstrs function))
+    follow mapping = M.map (\x -> fromMaybe x (M.lookup x mapping)) mapping
+    valUpdateFix = fixEq follow valUpdate

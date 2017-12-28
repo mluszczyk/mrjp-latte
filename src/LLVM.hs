@@ -11,7 +11,7 @@ data Value = VConst Integer
                | VFalse
                | VGetElementPtr Int String
                | VUndef
-               deriving Eq
+               deriving (Eq, Ord)
 
 data Register = Register Int | RArgument String
               deriving (Eq, Ord)

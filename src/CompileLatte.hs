@@ -174,10 +174,11 @@ compileFunc signatures (AbsLatte.FnDef fPosition type_ ident args (AbsLatte.Bloc
        let (func1, nextRegister1) = TransLLVM.mem2Reg func nextRegister0
        func2 <- TransLLVM.constantProp func1
        let func3 = TransLLVM.removeUnreachableBlocks func2
-       when (TransLLVM.hasUnreachableInstruction func3) $
+       let func4 = TransLLVM.removeTrivialPhis func3
+       when (TransLLVM.hasUnreachableInstruction func4) $
          raise $ CE.CEMissingReturn ident (compilePosition fPosition)
-       let func4 = TransLLVM.removeUnusedAssignments func3
-       return (func4, nextRegister1)
+       let func5 = TransLLVM.removeUnusedAssignments func4
+       return (func5, nextRegister1)
 
 defaultValue :: LLVM.Type -> LLVM.Value
 defaultValue LLVM.Ti1  = LLVM.VFalse
