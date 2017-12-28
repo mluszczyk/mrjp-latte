@@ -1,7 +1,7 @@
 int blah(int x) {
   int y = 2 + x * 5;
   int i = 0;
-  int sum = 0;
+  int sum = y;
 
   while (i < x) {
     sum = sum + (2 + x * 5);
