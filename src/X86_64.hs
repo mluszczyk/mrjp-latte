@@ -13,23 +13,46 @@ data Instr = IPushq Value
              | IRet
 
 data Value = VRegister Register
-           | VConst Int
+           | VConst Integer
            | VAddress Int Register
-data Register = Rrbp | Rrsp | Redi | Reax
+data Register = Rrbp | Rrsp | Redi | Resi | Reax | Redx | Recx | R8d | R9d
 
 fromLLVM :: LLVM.Module -> Module
-fromLLVM _ = Module [ Globl "_main"
-                    , Block "_main" [ IPushq (VRegister Rrbp)
-                                    , IMovq (VRegister Rrsp) (VRegister Rrbp)
-                                    , ISubq (VConst 16) (VRegister Rrsp)
-                                    , IMovl (VRegister Redi) (VAddress (-4) Rrbp)
-                                    , IMovl (VConst 123) (VRegister Redi)
-                                    , ICall "_latte_printInt"
-                                    , IMovl (VConst 42) (VRegister Reax)
-                                    , ILeave
-                                    , IRet
-                                    ]
-                    ]
+fromLLVM (LLVM.Module _ _ functions) = Module $ concatMap transFunc functions
+
+transFunc :: LLVM.Function -> [TopDef]
+transFunc (LLVM.Function _ name _ blocks) =
+  Globl ("_" ++ name) :
+  Block ("_" ++ name) [ IPushq (VRegister Rrbp)
+                      , IMovq (VRegister Rrsp) (VRegister Rrbp)
+                      ] :
+  concatMap (`transBlock` name) blocks
+
+transLabel :: LLVM.Label -> String -> String
+transLabel (LLVM.Label num) fName = "label_" ++ fName ++ "_" ++ show num
+
+transBlock :: LLVM.Block -> String -> [TopDef]
+transBlock (LLVM.Block label innerInstrs exitInstr) functionName =
+  [Block (transLabel label functionName)
+   (concatMap transInstr (innerInstrs ++ [exitInstr]))]
+
+transInstr :: LLVM.Instr -> [Instr]
+transInstr (LLVM.ICall _ name args _) =
+  argPushInstrs ++ [ICall $ "_" ++ name]
+  where
+    argPassingRegisters = [Redi, Resi, Redx, Recx, R8d, R9d]
+    argPushInstrs = -- TODO: types, more than 6
+      [IMovl (transVal value) (VRegister reg) | ((type_, value), reg) <- zip args argPassingRegisters]
+transInstr (LLVM.IRet _ val) = [ IMovl (transVal val) (VRegister Reax)
+                               , ILeave
+                               , IRet
+                               ]
+transInstr LLVM.IRetVoid = [ ILeave, IRet ]
+transInstr instr = error "unimplemented"
+
+transVal :: LLVM.Value -> Value
+transVal (LLVM.VConst num) = VConst num
+transVal _ = error "unimplemented"
 
 showAsm :: Module -> String
 showAsm (Module topDefs) =
