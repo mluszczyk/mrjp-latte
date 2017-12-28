@@ -143,6 +143,8 @@ compileFunc signatures (AbsLatte.FnDef fPosition type_ ident args (AbsLatte.Bloc
       let blocks = TransLLVM.instrsToBlocks instrs
           rawFunc = LLVM.Function (compileType type_) (compileFuncIdent ident) llvmArgs blocks
       (func, _) <- optimise rawFunc nextRegister
+      when (TransLLVM.hasUnreachableInstruction func) $
+        raise $ CE.CEMissingReturn ident (compilePosition fPosition)
       return (func, globals, constCounter1)
    where
      llvmArgs :: [(LLVM.Type, String)]
@@ -172,13 +174,15 @@ compileFunc signatures (AbsLatte.FnDef fPosition type_ ident args (AbsLatte.Bloc
 
      optimise func nextRegister0 = do
        let (func1, nextRegister1) = TransLLVM.mem2Reg func nextRegister0
+       func2 <- TransLLVM.fixEqM optimiseStep func1
+       return (func2, nextRegister1)
+
+     optimiseStep func1 = do
        func2 <- TransLLVM.constantProp func1
        let func3 = TransLLVM.removeUnreachableBlocks func2
        let func4 = TransLLVM.removeTrivialPhis func3
-       when (TransLLVM.hasUnreachableInstruction func4) $
-         raise $ CE.CEMissingReturn ident (compilePosition fPosition)
        let func5 = TransLLVM.removeUnusedAssignments func4
-       return (func5, nextRegister1)
+       return func5
 
 defaultValue :: LLVM.Type -> LLVM.Value
 defaultValue LLVM.Ti1  = LLVM.VFalse

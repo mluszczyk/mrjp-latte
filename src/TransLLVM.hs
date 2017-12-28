@@ -74,6 +74,11 @@ fixEq :: (Eq a) => (a -> a) -> a -> a
 fixEq follow prev = let next = follow prev in
   if next == prev then next else fixEq follow next
 
+fixEqM :: (Eq a, Monad m) => (a -> m a) -> a -> m a
+fixEqM follow prev = do
+  next <- follow prev
+  if next == prev then return next else fixEqM follow next
+
 hasUnreachableInstruction :: LLVM.Function -> Bool
 hasUnreachableInstruction LLVM.Function { LLVM.fBlocks = blocks } =
   any (\ block -> LLVM.bExitInstr block == LLVM.IUnreachable) blocks
@@ -347,7 +352,7 @@ removeTrivialPhis function =
    filterInnerInstrs (isNothing . extractTrivialPhi) function
   where
     extractTrivialPhi (LLVM.IPhi _ pairs reg) =
-      case S.toList (S.fromList (map fst pairs)) of
+      case S.toList (LLVM.VRegister reg `S.delete` S.fromList (map fst pairs)) of
         [value] -> Just (LLVM.VRegister reg, value)
         _ -> Nothing
     extractTrivialPhi _ = Nothing

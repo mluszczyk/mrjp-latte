@@ -35,6 +35,7 @@ data Instr = ICall Type String [(Type, Value)] (Maybe Register)
 data Block =  Block { bLabel :: Label
                     , bInnerInstrs :: [Instr]
                     , bExitInstr :: Instr }
+              deriving Eq
 
 data Cond = RelOpEQ | RelOpNE | RelOpSGT | RelOpSGE | RelOpSLT | RelOpSLE
           deriving Eq
@@ -46,6 +47,8 @@ data Function = Function { fType :: Type
                          , fName :: String
                          , fArgs :: [(Type, String)]
                          , fBlocks :: [Block] }
+                deriving Eq
+
 data ArithmOp = OAdd | OSub | OMul | OSDiv | OSRem deriving Eq
 
 data Constant = Constant Int String String
