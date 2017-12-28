@@ -26,6 +26,7 @@ library
                        CompilerState
                        LatteCommon
                        TransLLVM
+                       X86_64
   build-depends:       base >= 4.7 && < 5
                      , array
                      , containers

@@ -12,26 +12,31 @@ import ParLatte
 import AbsLatte
 import ErrM
 
-import CompileLatte (compileLatte, Position)
+import CompileLatte (compileLatte, Position, compileLatteToX86_64)
 import CompilerErr (errorToString)
 
 type ParseFun a = [Token] -> Err a
 
-run :: ParseFun (Program Position) -> String -> IO ()
-run p s =
+data Backend = LLVM | X86_64
+
+run :: ParseFun (Program Position) -> Backend -> String -> IO ()
+run p backend s =
    let ts = myLexer s in case p ts of
         Bad descr ->  do hPutStrLn stderr "\nParse              Failed...\n"
                          hPutStrLn stderr "Tokens:"
                          hPrint stderr ts
                          hPutStrLn stderr descr
                          exitFailure
-        Ok  tree ->  case compileLatte tree of
+        Ok  tree ->  case getBackend backend tree of
           Left ce      -> do
                             hPutStrLn stderr (errorToString ce)
                             exitFailure
           Right output -> do
                             putStr output
                             exitSuccess
+  where
+    getBackend LLVM = compileLatte
+    getBackend X86_64 = compileLatteToX86_64
 
 usage :: IO ()
 usage = do
@@ -48,6 +53,8 @@ main = do
   args <- getArgs
   case args of
     ["--help"] -> usage
-    [] -> getContents >>= run pProgram
-    [file] -> readFile file >>= run pProgram
+    [ "--x86_64" ] -> getContents >>= run pProgram X86_64
+    [ "--x86_64", file ] -> readFile file >>= run pProgram X86_64
+    [] -> getContents >>= run pProgram LLVM
+    [file] -> readFile file >>= run pProgram LLVM
     _ -> usage

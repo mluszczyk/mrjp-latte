@@ -53,6 +53,14 @@ data ArithmOp = OAdd | OSub | OMul | OSDiv | OSRem deriving Eq
 
 data Constant = Constant Int String String
 
+data Declare = Declare String FunctionType
+
+data Module = Module { mGlobals :: [Constant]
+                     , mDeclares :: [Declare]
+                     , mFunctions :: [Function] }
+
+-- data Program =
+
 showValue :: Value -> String
 showValue (VConst num) = show num
 showValue (VRegister reg) = showRegister reg
@@ -161,8 +169,8 @@ showGlobal (Constant size name string) =
      escape ('"' : s) = '\\' : '2' : '2' : escape s
      escape (a : s) = a : escape s
 
-showGlobalDecl :: String -> FunctionType -> String
-showGlobalDecl name (FunctionType args ret) =
+showDeclare :: Declare -> String
+showDeclare (Declare name (FunctionType args ret)) =
   "declare " ++ showType ret ++ " @" ++ name ++ "(" ++
   intercalate ", " (map showType args) ++
   ")"

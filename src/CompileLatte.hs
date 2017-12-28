@@ -1,6 +1,6 @@
 {-# OPTIONS_GHC -Wall -Werror #-}
 
-module CompileLatte (compileLatte, Position) where
+module CompileLatte (compileLatte, Position, compileLatteToX86_64) where
 
 import qualified Data.Map as M
 import qualified AbsLatte
@@ -12,6 +12,7 @@ import Data.Maybe (mapMaybe)
 
 import qualified LLVM
 import qualified TransLLVM
+import qualified X86_64
 import CompilerState
 
 llvmHeader :: [String]
@@ -25,11 +26,11 @@ builtins = [ (AbsLatte.CIdent "printInt", LLVM.FunctionType [LLVM.Ti32] LLVM.Tvo
            , (AbsLatte.CIdent "error", LLVM.FunctionType [] LLVM.Tvoid)
            ]
 
-hiddenBuiltins :: [(String, LLVM.FunctionType)]
+hiddenBuiltins :: [LLVM.Declare]
 hiddenBuiltins =
-           [ (concatName, LLVM.FunctionType [LLVM.Ti8Ptr, LLVM.Ti8Ptr] LLVM.Ti8Ptr)
-           , (streqName, LLVM.FunctionType [LLVM.Ti8Ptr, LLVM.Ti8Ptr] LLVM.Ti1)
-           , (strneName, LLVM.FunctionType [LLVM.Ti8Ptr, LLVM.Ti8Ptr] LLVM.Ti1)
+           [ LLVM.Declare concatName $ LLVM.FunctionType [LLVM.Ti8Ptr, LLVM.Ti8Ptr] LLVM.Ti8Ptr
+           , LLVM.Declare streqName $ LLVM.FunctionType [LLVM.Ti8Ptr, LLVM.Ti8Ptr] LLVM.Ti1
+           , LLVM.Declare strneName $ LLVM.FunctionType [LLVM.Ti8Ptr, LLVM.Ti8Ptr] LLVM.Ti1
            ]
 
 concatName :: String
@@ -111,22 +112,37 @@ getMainPosition topDefs =
       | otherwise = Nothing
 
 compileLatte :: AbsLatte.Program Position -> CompilerErrorM String
-compileLatte (AbsLatte.Program _ topDefs) =
-   do checkDuplicateFnDefs topDefs
-      let signatures = collectSignatures topDefs
-      checkMainSignature signatures (getMainPosition topDefs)
-      (funcLines, globalsLines, _) <- foldM (go signatures) ([], [emptyStringConst], initConstCounter) topDefs
-      let allLines = concatMap LLVM.showFunc funcLines
-      return $ unlines $
+compileLatte program =
+  do
+    module_ <- latteToLLVM program
+    return $ showModule module_
+  where
+    showModule (LLVM.Module globals declares functions) =
+      unlines (
         llvmHeader ++
-        map LLVM.showGlobal globalsLines ++
-        allLines ++
-        map (uncurry LLVM.showGlobalDecl) (map builtinToLLVM builtins ++ hiddenBuiltins)
+        map LLVM.showGlobal globals ++
+        concatMap LLVM.showFunc functions ++
+        map LLVM.showDeclare declares )
 
-   where go signatures (functions, constants, constCounter0) topDef =
+latteToLLVM :: AbsLatte.Program Position -> CompilerErrorM LLVM.Module
+latteToLLVM (AbsLatte.Program _ topDefs) =
+  do checkDuplicateFnDefs topDefs
+     let signatures = collectSignatures topDefs
+     checkMainSignature signatures (getMainPosition topDefs)
+     (functions, globals, _) <- foldM (go signatures) ([], [emptyStringConst], initConstCounter) topDefs
+     return  LLVM.Module { LLVM.mGlobals = globals
+                               , LLVM.mDeclares = map builtinToLLVM builtins ++ hiddenBuiltins
+                               , LLVM.mFunctions = functions }
+  where
+    go signatures (functions, constants, constCounter0) topDef =
            do (newFunc, newConstants, constCounter1) <- compileFunc signatures topDef constCounter0
               return (functions ++ [newFunc], constants ++ newConstants, constCounter1)
-         builtinToLLVM (ident, type_) = (compileFuncIdent ident, type_)
+    builtinToLLVM (ident, type_) = LLVM.Declare (compileFuncIdent ident) type_
+
+compileLatteToX86_64 :: AbsLatte.Program Position -> CompilerErrorM String
+compileLatteToX86_64 program = do
+  llvm <- latteToLLVM program
+  return $ X86_64.showAsm (X86_64.fromLLVM llvm)
 
 compileFunc :: Signatures -> AbsLatte.TopDef Position -> ConstCounter
       -> CompilerErrorM (LLVM.Function, [LLVM.Constant], ConstCounter)
