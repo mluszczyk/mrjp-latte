@@ -150,7 +150,10 @@ transInstr LLVM.IUnreachable _ _ = error "unreachable"
 transVal :: LLVM.Value -> Reg2Mem -> Value
 transVal (LLVM.VConst num) _ = VConst num
 transVal (LLVM.VRegister reg) reg2Mem = reg2Mem M.! reg
-transVal _ _ = error "unimplemented"
+transVal LLVM.VTrue _ = VConst 1
+transVal LLVM.VFalse _ = VConst 0
+transVal LLVM.VUndef _ = error "unreachable"
+transVal (LLVM.VGetElementPtr _ _) _ = error "unimplemented"
 
 showAsm :: Module -> String
 showAsm (Module topDefs) =
