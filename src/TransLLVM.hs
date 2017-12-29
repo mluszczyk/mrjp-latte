@@ -234,6 +234,28 @@ filterInnerInstrs shouldStay function = function {
 
 listInstrs :: LLVM.Function -> [LLVM.Instr]
 listInstrs function = concatMap listBlockInstrs (LLVM.fBlocks function)
+listValsInInstr :: LLVM.Instr -> [LLVM.Value]
+listValsInInstr instr = case instr of
+  LLVM.ICall _ _ args mReg ->
+    map snd args ++ maybe [] (\r -> [LLVM.VRegister r]) mReg
+  LLVM.IRetVoid -> []
+  LLVM.IRet _ v -> [v]
+  LLVM.IArithm _ v1 v2 _ r -> [v1, v2, LLVM.VRegister r]
+  LLVM.IBr _ -> []
+  LLVM.IBrCond _ v _ _-> [v]
+  LLVM.ILabel _ -> []
+  LLVM.ILoad _ _ r1 r2 -> [LLVM.VRegister r1, LLVM.VRegister r2]
+  LLVM.IStore _ val _ reg -> [val, LLVM.VRegister reg]
+  LLVM.IAlloca _ reg -> [LLVM.VRegister reg]
+  LLVM.IIcmp _ _ v1 v2 reg -> [v1, v2, LLVM.VRegister reg]
+  LLVM.IPhi _ pairs reg -> LLVM.VRegister reg : map fst pairs
+  LLVM.IUnreachable -> []
+
+listValsInFunc :: LLVM.Function -> [LLVM.Value]
+listValsInFunc func =
+  map (\(_, name) -> LLVM.VRegister (LLVM.RArgument name)) (LLVM.fArgs func) ++
+  concatMap listValsInInstr (listInstrs func)
+
 listBlockInstrs :: LLVM.Block -> [LLVM.Instr]
 listBlockInstrs block = LLVM.bInnerInstrs block ++ [LLVM.bExitInstr block]
 mapFuncInstrsM :: (Monad m) => (LLVM.Instr -> m LLVM.Instr) -> LLVM.Function -> m LLVM.Function
