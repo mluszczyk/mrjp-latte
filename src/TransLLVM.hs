@@ -234,26 +234,29 @@ filterInnerInstrs shouldStay function = function {
 
 listInstrs :: LLVM.Function -> [LLVM.Instr]
 listInstrs function = concatMap listBlockInstrs (LLVM.fBlocks function)
-listValsInInstr :: LLVM.Instr -> [LLVM.Value]
+listValsInInstr :: LLVM.Instr -> [(LLVM.Type, LLVM.Value)]
 listValsInInstr instr = case instr of
-  LLVM.ICall _ _ args mReg ->
-    map snd args ++ maybe [] (\r -> [LLVM.VRegister r]) mReg
+  LLVM.ICall retType _ args mReg ->
+    args ++ maybe [] (\r -> [(retType, LLVM.VRegister r)]) mReg
   LLVM.IRetVoid -> []
-  LLVM.IRet _ v -> [v]
-  LLVM.IArithm _ v1 v2 _ r -> [v1, v2, LLVM.VRegister r]
+  LLVM.IRet type_ v -> [(type_, v)]
+  LLVM.IArithm type_ v1 v2 _ r -> [(type_, v1), (type_, v2), (type_, LLVM.VRegister r)]
   LLVM.IBr _ -> []
-  LLVM.IBrCond _ v _ _-> [v]
+  LLVM.IBrCond type_ v _ _-> [(type_, v)]
   LLVM.ILabel _ -> []
-  LLVM.ILoad _ _ r1 r2 -> [LLVM.VRegister r1, LLVM.VRegister r2]
-  LLVM.IStore _ val _ reg -> [val, LLVM.VRegister reg]
-  LLVM.IAlloca _ reg -> [LLVM.VRegister reg]
-  LLVM.IIcmp _ _ v1 v2 reg -> [v1, v2, LLVM.VRegister reg]
-  LLVM.IPhi _ pairs reg -> LLVM.VRegister reg : map fst pairs
+  LLVM.ILoad typeVal typePtr r1 r2 -> -- TODO: inaccurate
+    [(typeVal, LLVM.VRegister r1), (typePtr, LLVM.VRegister r2)]
+  LLVM.IStore typeVal val typeReg reg -> [(typeVal, val), (typeReg, LLVM.VRegister reg)]
+  LLVM.IAlloca type_ reg ->  -- TODO: this may be inaccurate
+    [(type_, LLVM.VRegister reg)]
+  LLVM.IIcmp _ type_ v1 v2 reg -> [(type_, v1), (type_, v2), (LLVM.Ti1, LLVM.VRegister reg)]
+  LLVM.IPhi type_ pairs reg ->
+   (type_, LLVM.VRegister reg) : map (\p -> (type_, fst p)) pairs
   LLVM.IUnreachable -> []
 
-listValsInFunc :: LLVM.Function -> [LLVM.Value]
+listValsInFunc :: LLVM.Function -> [(LLVM.Type, LLVM.Value)]
 listValsInFunc func =
-  map (\(_, name) -> LLVM.VRegister (LLVM.RArgument name)) (LLVM.fArgs func) ++
+  map (\(type_, name) -> (type_, LLVM.VRegister (LLVM.RArgument name))) (LLVM.fArgs func) ++
   concatMap listValsInInstr (listInstrs func)
 
 listBlockInstrs :: LLVM.Block -> [LLVM.Instr]
