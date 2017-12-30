@@ -7,8 +7,9 @@ import qualified TransLLVM
 
 import qualified Data.Map as M
 import qualified Data.Set as S
-import Control.Monad.Writer (tell, Writer, execWriter)
+import Control.Monad.Writer (tell, Writer, execWriter, when)
 import Data.Maybe (mapMaybe)
+import Control.Arrow (second)
 
 newtype Module = Module [TopDef]
 data TopDef = Globl String
@@ -21,6 +22,7 @@ data Instr = IPushq Value
              | ISubq Value Value
              | IImull Value Value
              | IAddl Value Value
+             | IAddq Value Value
              | IDivl Value
              | ICdq
              | ICall String
@@ -62,6 +64,10 @@ type InstrWriter = Writer [Instr]
 argPassingRegisters :: [Register]
 argPassingRegisters = [Rrdi, Rrsi, Rrdx, Rrcx, Rr8, Rr9]
 
+argPassingPositions :: Int -> Register -> [Value]
+argPassingPositions offset base =
+  [VAddress num base | num <- [offset, offset + 8..]]
+
 fromLLVM :: LLVM.Module -> Module
 fromLLVM (LLVM.Module globals _ functions) =
   Module $ concatMap transFunc functions ++ map transGlobal globals
@@ -76,23 +82,30 @@ transFunc function@(LLVM.Function _ name args blocks) =
   map (uncurry transSplitEdge) splitEdges
 
   where
-    usedRegisters = S.toList $ S.fromList $
+    typedStackRegisters = map (second LLVM.RArgument) stackArgs
+      where
+        stackArgs = drop (length argPassingRegisters) args
+    localRegisters = S.toList $ S.fromList (
       mapMaybe extractRegister $
-      TransLLVM.listValsInFunc function
+      TransLLVM.listValsInFunc function) S.\\
+      S.fromList typedStackRegisters
     storeArgs = [IMov size (VRegister (castRegister passReg size))
                             (reg2Mem M.! LLVM.RArgument val)
                  | (passReg, (type_, val)) <- zip argPassingRegisters args
                  , let size = typeToSize type_ ] ++
-                [ISubq (VConst (toInteger (align16 (8 * length usedRegisters))))
+                [ISubq (VConst (toInteger (align16 localsSpace)))
                        (VRegister Rrsp)]
-    align16 num = num + ((16 - num `mod` 16) `mod` 16)
-    localsLayout = scanl1 (+) [-sizeToInt (typeToSize type_) | (type_, _) <- usedRegisters]
+      where
+        localsSpace = if null localsLayout then 0 else - last localsLayout
+    localsLayout = scanl1 (+) [-sizeToInt (typeToSize type_) | (type_, _) <- localRegisters]
 
     extractRegister (type_, LLVM.VRegister reg) = Just (type_, reg)
     extractRegister _ = Nothing
     reg2Mem =
-      M.fromList (zip (map snd usedRegisters)
-                      (map (`VAddress` Rrbp) localsLayout))
+      M.fromList (zip (map snd localRegisters)
+                      (map (`VAddress` Rrbp) localsLayout) ++
+                  zip (map snd typedStackRegisters)
+                      (argPassingPositions 16 Rrbp))
 
     splitEdges =
       mapMaybe goBlock blocks
@@ -119,6 +132,9 @@ transFunc function@(LLVM.Function _ name args blocks) =
 type CollectedPhis = M.Map (LLVM.Label, LLVM.Label)
                         [(LLVM.Type, LLVM.Register, LLVM.Value)]
 
+align16 :: Int -> Int
+align16 num = num + ((16 - num `mod` 16) `mod` 16)
+
 transLabel :: LLVM.Label -> String -> String
 transLabel (LLVM.Label num) fName = "label_" ++ fName ++ "_" ++ show num
 
@@ -140,14 +156,27 @@ transInstrM :: LLVM.Instr -> String -> Reg2Mem -> CollectedPhis -> LLVM.Label ->
 transInstrM (LLVM.ICall fType name args mResultReg) _ reg2Mem _ _ = do
   argPushInstrs
   tell [ICall $ "_" ++ name]
+  argPopInstrs
   saveResult
   where
-    argPushInstrs = -- TODO: more than 6 args
+    stackArgs = length args - 6
+    argPushInstrs = do
       mapM_ (\ ((type_, value), reg) -> do
         let size = typeToSize type_
         val <- transVal value reg2Mem
         tell [IMov size val (VRegister (castRegister reg size))])
         (zip args argPassingRegisters)
+      when (stackArgs > 0) $
+        tell [ISubq (VConst (toInteger (align16 (8 * stackArgs)))) (VRegister Rrsp)]
+      mapM_ (\ ((type_, value), dstVal) -> do
+        let size = typeToSize type_
+        val <- transVal value reg2Mem
+        tell [IMov size val dstVal])
+        (zip (drop (length argPassingRegisters) args)
+             (argPassingPositions 0 Rrsp))
+    argPopInstrs =
+      when (stackArgs > 0) $
+        tell [IAddq (VConst (toInteger (align16 (8 * stackArgs)))) (VRegister Rrsp)]
     saveResult = maybe (tell []) (\reg -> do
       val <- transVal (LLVM.VRegister reg) reg2Mem
       let retSize = typeToSize fType
@@ -280,6 +309,7 @@ showInstr (ISubl val1 val2) = "subl " ++ showVal val1 ++ ", " ++ showVal val2
 showInstr (ISubq val1 val2) = "subq " ++ showVal val1 ++ ", " ++ showVal val2
 showInstr (IImull val1 val2) = "imull " ++ showVal val1 ++ ", " ++ showVal val2
 showInstr (IAddl val1 val2) = "addl " ++ showVal val1 ++ ", " ++ showVal val2
+showInstr (IAddq val1 val2) = "addq " ++ showVal val1 ++ ", " ++ showVal val2
 showInstr (IDivl val) = "divl " ++ showVal val
 showInstr (ICall string) = "call " ++ string
 showInstr ILeave = "leave"
