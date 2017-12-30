@@ -58,7 +58,8 @@ transFunc function@(LLVM.Function _ name args blocks) =
   Block ("_" ++ name) ([ IPushq (VRegister Rrbp)
                        , IMovq (VRegister Rrsp) (VRegister Rrbp)
                        ] ++ storeArgs) :
-  concatMap (\block -> transBlock block name reg2Mem) blocks
+  concatMap (\block -> transBlock block name reg2Mem collectedPhis) blocks ++
+  map (uncurry transSplitEdge) splitEdges
 
   where
     usedRegisters = S.toList $ S.fromList $
@@ -75,30 +76,59 @@ transFunc function@(LLVM.Function _ name args blocks) =
       M.fromList (zip usedRegisters
                       (map (\num -> VAddress (-4 * num) Rrbp) [1::Int ..]))
 
+    splitEdges =
+      mapMaybe goBlock blocks
+      where
+        goBlock LLVM.Block { LLVM.bLabel = srcLabel
+                           , LLVM.bExitInstr = LLVM.IBrCond _ _ dstLabel _ } =
+          Just (srcLabel, dstLabel)
+        goBlock _ = Nothing
+    transSplitEdge srcLabel dstLabel =
+      Block (phiLabel srcLabel dstLabel name) $
+        transPhis collectedPhis srcLabel dstLabel reg2Mem ++
+        [IJmp (transLabel dstLabel name)]
+    collectedPhis :: CollectedPhis
+    collectedPhis =
+      M.unionsWith (++) (concatMap goBlock blocks)
+      where
+        goBlock block = map goInstr (LLVM.bInnerInstrs block)
+          where
+            goInstr (LLVM.IPhi type_ pairs reg) = M.fromList
+              [ ((srcBlock, LLVM.bLabel block), [(type_, reg, val)])
+              | (val, srcBlock) <- pairs]
+            goInstr _ = M.empty
+
+type CollectedPhis = M.Map (LLVM.Label, LLVM.Label)
+                        [(LLVM.Type, LLVM.Register, LLVM.Value)]
+
 transLabel :: LLVM.Label -> String -> String
 transLabel (LLVM.Label num) fName = "label_" ++ fName ++ "_" ++ show num
 
-transBlock :: LLVM.Block -> String -> Reg2Mem -> [TopDef]
-transBlock (LLVM.Block label innerInstrs exitInstr) functionName reg2Mem =
+phiLabel :: LLVM.Label -> LLVM.Label -> String -> String
+phiLabel (LLVM.Label src) (LLVM.Label dst) fName =
+  "phi_" ++ fName ++ "_" ++ show src ++ "_" ++ show dst
+
+transBlock :: LLVM.Block -> String -> Reg2Mem -> CollectedPhis -> [TopDef]
+transBlock (LLVM.Block label innerInstrs exitInstr) functionName reg2Mem collectedPhis =
   [Block (transLabel label functionName)
-   (concatMap (\instr -> transInstr instr functionName reg2Mem)
+   (concatMap (\instr -> transInstr instr functionName reg2Mem collectedPhis label)
               (innerInstrs ++ [exitInstr]))]
 
-transInstr :: LLVM.Instr -> String -> Reg2Mem -> [Instr]
-transInstr (LLVM.ICall _ name args mResultReg) _ reg2Mem =
+transInstr :: LLVM.Instr -> String -> Reg2Mem -> CollectedPhis -> LLVM.Label -> [Instr]
+transInstr (LLVM.ICall _ name args mResultReg) _ reg2Mem _ _ =
   argPushInstrs ++ [ICall $ "_" ++ name] ++ saveResult
   where
     argPushInstrs = -- TODO: types, more than 6
       [IMovl (transVal value reg2Mem) (VRegister reg)
         | ((_, value), reg) <- zip args argPassingRegisters]
     saveResult = maybe [] (\reg -> [IMovl (VRegister Reax) (transVal (LLVM.VRegister reg) reg2Mem)]) mResultReg
-transInstr (LLVM.IRet _ val) _ reg2Mem =
+transInstr (LLVM.IRet _ val) _ reg2Mem _ _ =
    [ IMovl (transVal val reg2Mem) (VRegister Reax)
    , ILeave
    , IRet
    ]
-transInstr LLVM.IRetVoid _ _ = [ ILeave, IRet ]
-transInstr (LLVM.IArithm _ v1 v2 op reg) _ mem2Reg
+transInstr LLVM.IRetVoid _ _ _ _ = [ ILeave, IRet ]
+transInstr (LLVM.IArithm _ v1 v2 op reg) _ mem2Reg _ _
     | op == LLVM.OSDiv
     , op == LLVM.OSRem =
   [ IMovl (transVal v1 mem2Reg) (VRegister Reax)
@@ -108,7 +138,7 @@ transInstr (LLVM.IArithm _ v1 v2 op reg) _ mem2Reg
           (transVal (LLVM.VRegister reg) mem2Reg)
   ]
 
-transInstr (LLVM.IArithm _ v1 v2 op reg) _ mem2Reg =
+transInstr (LLVM.IArithm _ v1 v2 op reg) _ mem2Reg _ _ =
   [ IMovl (transVal v1 mem2Reg) (VRegister Reax)
   , asmOp (transVal v2 mem2Reg) (VRegister Reax)
   , IMovl (VRegister Reax) (transVal (LLVM.VRegister reg) mem2Reg)
@@ -120,8 +150,10 @@ transInstr (LLVM.IArithm _ v1 v2 op reg) _ mem2Reg =
       LLVM.OAdd -> IAddl
       _ -> error "unreachable"
 
-transInstr (LLVM.IBr label) fName _ = [IJmp (transLabel label fName)]
-transInstr (LLVM.IIcmp cond _ val1 val2 reg) _ mem2Reg =
+transInstr (LLVM.IBr label) fName reg2Mem collectedPhis curLabel =
+  transPhis collectedPhis curLabel label reg2Mem ++
+  [ IJmp (transLabel label fName) ]
+transInstr (LLVM.IIcmp cond _ val1 val2 reg) _ mem2Reg _ _ =
   [ IMovl (transVal val1 mem2Reg) (VRegister Reax)
   , ICmpl (transVal val2 mem2Reg) (VRegister Reax)
   , asmOp (transVal (LLVM.VRegister reg) mem2Reg)
@@ -135,17 +167,26 @@ transInstr (LLVM.IIcmp cond _ val1 val2 reg) _ mem2Reg =
       LLVM.RelOpSLE -> ISetle
       LLVM.RelOpSLT -> ISetl
 
-transInstr (LLVM.IBrCond _ val label1 label2) fName mem2Reg =
-  [ ITestb (VConst 1) (transVal val mem2Reg)
-  , IJnz (transLabel label1 fName)
-  , IJmp (transLabel label2 fName)
+transInstr (LLVM.IBrCond _ val label1 label2) fName reg2Mem collectedPhis curLabel =
+  [ ITestb (VConst 1) (transVal val reg2Mem)
+  , IJnz (phiLabel curLabel label1 fName) ] ++
+  transPhis collectedPhis curLabel label2 reg2Mem ++
+  [ IJmp (transLabel label2 fName)
   ]
-transInstr LLVM.IPhi {} _ _ = error "unimplemented"
-transInstr LLVM.ILabel {} _ _ = error "unreachable"
-transInstr LLVM.ILoad {} _ _ = error "unreachable"
-transInstr LLVM.IStore {} _ _ = error "unreachable"
-transInstr LLVM.IAlloca {} _ _ = error "unreachable"
-transInstr LLVM.IUnreachable _ _ = error "unreachable"
+transInstr LLVM.IPhi {} _ _ _ _ = []
+transInstr LLVM.ILabel {} _ _ _ _ = error "unreachable"
+transInstr LLVM.ILoad {} _ _ _ _ = error "unreachable"
+transInstr LLVM.IStore {} _ _ _ _ = error "unreachable"
+transInstr LLVM.IAlloca {} _ _ _ _ = error "unreachable"
+transInstr LLVM.IUnreachable _ _ _ _ = error "unreachable"
+
+transPhis :: CollectedPhis -> LLVM.Label -> LLVM.Label -> Reg2Mem -> [Instr]
+transPhis collectedPhis srcLabel dstLabel reg2Mem = concat
+  [ [ IMovl (transVal val reg2Mem) (VRegister Reax)
+    , IMovl (VRegister Reax) (transVal (LLVM.VRegister reg) reg2Mem)
+    ]
+  | (_, reg, val) <- M.findWithDefault [] (srcLabel, dstLabel) collectedPhis
+  ]
 
 transVal :: LLVM.Value -> Reg2Mem -> Value
 transVal (LLVM.VConst num) _ = VConst num
