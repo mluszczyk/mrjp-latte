@@ -1,5 +1,7 @@
 {-# OPTIONS_GHC -Wall -Werror #-}
 
+-- listing of possible compiler errors
+
 module CompilerErr where
 
 import qualified AbsLatte

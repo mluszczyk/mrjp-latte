@@ -1,6 +1,8 @@
 {-# OPTIONS_GHC -Wall -Werror #-}
 {-# LANGUAGE FlexibleInstances #-}
 
+-- monads used in the compiler.
+
 module CompilerState where
 
 import qualified Data.Map as M

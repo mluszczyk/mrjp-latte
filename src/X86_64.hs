@@ -1,5 +1,8 @@
 {-# OPTIONS_GHC -Wall -Werror #-}
 
+-- ADT representation of x86_64 assembly, transformation of LLVM to assembly
+-- and pretty printing.
+
 module X86_64 (fromLLVM, showAsm) where
 
 import qualified LLVM

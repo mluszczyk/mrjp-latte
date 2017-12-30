@@ -1,3 +1,7 @@
+/* Core library of Latte.
+ * Functions starting with latte_ can be used from Latte, without the latte_
+ * prefix. The others are helper functions, possibly injected by the compiler.
+ */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>

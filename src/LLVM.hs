@@ -1,5 +1,7 @@
 {-# OPTIONS_GHC -Wall -Werror #-}
 
+-- definition of LLVM IR AST and pretty printing
+
 module LLVM where
 
 import Data.List (intercalate)

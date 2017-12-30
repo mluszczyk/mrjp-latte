@@ -1,5 +1,7 @@
 {-# OPTIONS_GHC -Wall -Werror #-}
 
+-- translates Latte AST to LLVM
+
 module CompileLatte (compileLatte, Position, compileLatteToX86_64) where
 
 import qualified Data.Map as M

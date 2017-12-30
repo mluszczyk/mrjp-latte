@@ -1,5 +1,7 @@
 {-# OPTIONS_GHC -Wall -Werror #-}
 
+-- transformations on LLVM including optimisations and mem2reg algorithm.
+
 module TransLLVM where
 
 import qualified Data.Map as M
