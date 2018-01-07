@@ -195,7 +195,8 @@ mapValInFunc go = mapFuncInstrs (mapValInInstr go)
 
 removeUnusedAssignments :: LLVM.Function -> LLVM.Function
 removeUnusedAssignments function =
-    filterInnerInstrs isUsed function
+    (filterInnerInstrs isUsed function)
+      { LLVM.fArgs = map goArg (LLVM.fArgs function)}
   where
     getUsedValues :: LLVM.Instr -> [LLVM.Value]
     getUsedValues (LLVM.ICall _ _ args _) = map snd args
@@ -230,6 +231,12 @@ removeUnusedAssignments function =
     getMResult (LLVM.IAlloca _ reg) = Just reg
     getMResult _ = Nothing  -- ICall should return Nothing,
                             -- mind the side effects!
+
+    goArg :: (LLVM.Type, Maybe String) -> (LLVM.Type, Maybe String)
+    goArg (argType, Just name)
+      | not (LLVM.RArgument name `S.member` usedAssignments) = 
+      (argType, Nothing)
+    goArg other = other
 
 filterInnerInstrs :: (LLVM.Instr -> Bool) -> LLVM.Function -> LLVM.Function
 filterInnerInstrs shouldStay function = function {
@@ -281,7 +288,8 @@ setRegisters instr = case instr of
 
 listRegisters :: LLVM.Function -> [(LLVM.Type, LLVM.Register)]
 listRegisters function = S.toList $ S.fromList (
-  map (second LLVM.RArgument) (LLVM.fArgs function) ++
+  mapMaybe (\(t, mn) -> case mn of Just n -> Just (t, LLVM.RArgument n)
+                                   _ -> Nothing) (LLVM.fArgs function) ++
   mapMaybe extractRegister (listValsInFunc function))
 
 registerType :: LLVM.Function -> M.Map LLVM.Register LLVM.Type
@@ -297,8 +305,11 @@ listValsInInstr instr = accessedVals instr ++
 
 listValsInFunc :: LLVM.Function -> [(LLVM.Type, LLVM.Value)]
 listValsInFunc func =
-  map (\(type_, name) -> (type_, LLVM.VRegister (LLVM.RArgument name))) (LLVM.fArgs func) ++
+  mapMaybe go (LLVM.fArgs func) ++
   concatMap listValsInInstr (listInstrs func)
+  where
+    go (type_, Just name) = Just (type_, LLVM.VRegister (LLVM.RArgument name))
+    go _ = Nothing
 
 listBlockInstrs :: LLVM.Block -> [LLVM.Instr]
 listBlockInstrs block = LLVM.bInnerInstrs block ++ [LLVM.bExitInstr block]

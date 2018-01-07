@@ -47,7 +47,7 @@ newtype Label = Label Int deriving (Eq, Ord)
 data FunctionType = FunctionType [Type] Type deriving Eq
 data Function = Function { fType :: Type
                          , fName :: String
-                         , fArgs :: [(Type, String)]
+                         , fArgs :: [(Type, Maybe String)]
                          , fBlocks :: [Block] }
                 deriving Eq
 
@@ -148,7 +148,9 @@ showFunc :: Function -> [String]
 showFunc (Function retType ident args blocks) =
           ["define " ++ showType retType ++
           " @" ++ ident ++ "(" ++
-          intercalate ", " (map (\ (t, n) -> showType t ++ " " ++ showRegister (RArgument n)) args) ++
+          intercalate ", " (map (\ (t, mn) ->
+            showType t ++
+            maybe "" (\n -> " " ++ showRegister (RArgument n)) mn) args) ++
           ") {"] ++
           concatMap showBlock blocks ++
           ["}"]

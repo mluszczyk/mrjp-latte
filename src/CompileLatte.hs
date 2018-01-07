@@ -165,8 +165,8 @@ compileFunc signatures (AbsLatte.FnDef fPosition type_ ident args (AbsLatte.Bloc
         raise $ CE.CEMissingReturn ident (compilePosition fPosition)
       return (func, globals, constCounter1)
    where
-     llvmArgs :: [(LLVM.Type, String)]
-     llvmArgs = map (\ (AbsLatte.Arg _ argType argIdent) -> (compileType argType, compileVariableIdent argIdent)) args
+     llvmArgs :: [(LLVM.Type, Maybe String)]
+     llvmArgs = map (\ (AbsLatte.Arg _ argType argIdent) -> (compileType argType, Just (compileVariableIdent argIdent))) args
 
      makeBody :: StatementM ()
      makeBody =

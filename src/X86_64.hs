@@ -13,7 +13,7 @@ import qualified Data.Map as M
 import Data.List ((\\), sort, nub, elemIndex)
 import Data.Tuple (swap)
 import Control.Monad.Writer (tell, Writer, execWriter, when)
-import Data.Maybe (mapMaybe, fromMaybe)
+import Data.Maybe (mapMaybe, fromMaybe, isJust)
 
 newtype Module = Module [TopDef]
 data TopDef = Globl String
@@ -138,7 +138,7 @@ transFunc function@(LLVM.Function _ name args blocks) =
         coloursForMemArgs_ = sort $ nub $ map snd $ filter highColour $ filter isMemArgument $ M.toList regColours
         highColour (_, num) = num >= length allocatedRegisters
         isMemArgument (LLVM.RArgument argName, _) =
-          maybe (error "unreachable") (>= length argPassingRegisters) (elemIndex argName (map snd args))
+          maybe (error "unreachable") (>= length argPassingRegisters) (elemIndex (Just argName) (map snd args))
         isMemArgument _ = False
 
     regArgs :: [Register]
@@ -162,7 +162,7 @@ transFunc function@(LLVM.Function _ name args blocks) =
     memArgToAddress _ = error "unreachable"
 
     argPosition :: String -> Int
-    argPosition argName = let Just i = elemIndex argName (map snd args) in i
+    argPosition argName = let Just i = elemIndex (Just argName) (map snd args) in i
 
     colourToMem = M.map memArgToAddress colourToMemArg `M.union`
       M.map VRegister regArgColourToReg `M.union`
@@ -176,14 +176,18 @@ transFunc function@(LLVM.Function _ name args blocks) =
 
     storeArgs = [IMov size (VRegister (castRegister passReg size))
                             (reg2Mem M.! LLVM.RArgument val)
-                 | (passReg, (type_, val)) <- zip argPassingRegisters args
-                 , let size = typeToSize type_ ] ++
+                 | (passReg, (type_, mVal)) <- zip argPassingRegisters args
+                 , isJust mVal
+                 , let size = typeToSize type_
+                       Just val = mVal ] ++
                 [ISubq (VConst (toInteger
                                 (align16 (8 * length distinctColours))))
                        (VRegister Rrsp)] ++
                 concat [ smartmov size passAddr (reg2Mem M.! LLVM.RArgument val)
-                | (passAddr, (type_, val)) <- zip (argPassingPositions 16 Rrbp) (drop (length argPassingRegisters) args)
-                , let size = typeToSize type_ ]
+                | (passAddr, (type_, mVal)) <- zip (argPassingPositions 16 Rrbp) (drop (length argPassingRegisters) args)
+                , isJust mVal
+                , let size = typeToSize type_
+                      Just val = mVal ]
 
     splitEdges =
       mapMaybe goBlock blocks
