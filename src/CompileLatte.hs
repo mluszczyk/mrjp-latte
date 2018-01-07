@@ -2,7 +2,7 @@
 
 -- translates Latte AST to LLVM
 
-module CompileLatte (compileLatte, Position, compileLatteToX86_64) where
+module CompileLatte (compileLatte, Position, compileLatteToX86_64, latteToLLVM) where
 
 import qualified Data.Map as M
 import qualified AbsLatte

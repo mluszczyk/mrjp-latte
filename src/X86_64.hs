@@ -1,18 +1,19 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wall -Werror #-}
-
 -- ADT representation of x86_64 assembly, transformation of LLVM to assembly
 -- and pretty printing.
 
-module X86_64 (fromLLVM, showAsm) where
+module X86_64 (fromLLVM, showAsm, colourGraph) where
 
 import qualified LLVM
 import qualified TransLLVM
 
 import qualified Data.Map as M
-import qualified Data.Set as S
+
+import Data.List ((\\), sort, nub, elemIndex)
+import Data.Tuple (swap)
 import Control.Monad.Writer (tell, Writer, execWriter, when)
-import Data.Maybe (mapMaybe)
-import Control.Arrow (second)
+import Data.Maybe (mapMaybe, fromMaybe)
 
 newtype Module = Module [TopDef]
 data TopDef = Globl String
@@ -20,6 +21,7 @@ data TopDef = Globl String
               | Asciz String String
 data Instr = IPushq Value
              | IMov Size Value Value
+             | IXchg Size Value Value
              | ILeaq Value Value
              | ISubl Value Value
              | ISubq Value Value
@@ -59,13 +61,23 @@ data Register = Rrbp | Rrsp | Redi | Resi
                 | Rdil | Rsil | Rdl
                 | Rcl | Rr8b | Rr9b
                 | Ral
+               deriving Eq
 
 type Reg2Mem = M.Map LLVM.Register Value
+
 
 type InstrWriter = Writer [Instr]
 
 argPassingRegisters :: [Register]
 argPassingRegisters = [Rrdi, Rrsi, Rrdx, Rrcx, Rr8, Rr9]
+
+-- x86_64
+-- calleePreservedRegisters: r12, r13, r14, r15, rbx, rsp, rbp
+-- rax, rbx, rcx, rdx, rsp, rbp, rsi, rdi, r8, r9, r10, r11, r12-r15
+-- rax, rcx, rdx have special use in division - never alloc them
+-- rdi, rsi, r8, r9, r10, r11 are best for allocation
+allocatedRegisters :: [Register]
+allocatedRegisters = [Rrdi, Rrsi, Rr8, Rr9]
 
 argPassingPositions :: Int -> Register -> [Value]
 argPassingPositions offset base =
@@ -74,6 +86,19 @@ argPassingPositions offset base =
 fromLLVM :: LLVM.Module -> Module
 fromLLVM (LLVM.Module globals _ functions) =
   Module $ concatMap transFunc functions ++ map transGlobal globals
+
+smartmov :: Size -> Value -> Value -> [Instr]
+smartmov size val1@(VAddress _ _) val2@(VAddress _ _)  =
+  [IMov size val1 (VRegister (castRegister Rrax size)),
+   IMov size (VRegister (castRegister Rrax size)) val2]
+smartmov size val1 val2 =
+  [IMov size val1 val2]
+
+usedQuadRegisters :: Reg2Mem -> [Register]
+usedQuadRegisters reg2Mem = nub (map (`castRegister` SQuad) (mapMaybe extractRegister (M.elems reg2Mem)))
+  where
+    extractRegister val = case val of VRegister reg -> Just reg
+                                      _ -> Nothing
 
 transFunc :: LLVM.Function -> [TopDef]
 transFunc function@(LLVM.Function _ name args blocks) =
@@ -84,31 +109,81 @@ transFunc function@(LLVM.Function _ name args blocks) =
   concatMap (\block -> transBlock block name reg2Mem collectedPhis) blocks ++
   map (uncurry transSplitEdge) splitEdges
 
+  {- + construct inference graph -> (Vertices, Edges)
+     + colour the graph (map LLVM.Register Colour) Colour = Int
+     + map Colour Value,
+       mind that some args are already in the memory
+     move args from stack to registers if needed
+     move args from registers to stack if needed
+     if using callee saved register, save their value
+     + changes: at function calls, save all (used) caller saved registers
+     +          handle phis correctly
+   -}
+ -- TOOD: make sure that no two args have the same place in memory (unused args)
   where
-    typedStackRegisters = map (second LLVM.RArgument) stackArgs
+    regType = TransLLVM.registerType function
+    reg2Mem :: Reg2Mem
+    reg2Mem = M.mapWithKey (\reg val -> castVal val (regType M.! reg))
+                           (M.map (colourToMem M.!) regColours)
+     where
+       castVal (VRegister reg) type_ =
+         VRegister (castRegister reg (typeToSize type_))
+       castVal val _ = val
+    regColours = colourGraph (TransLLVM.inferenceGraph function)
+    distinctColours = nub (sort (M.elems regColours))
+    (colourToMemArg, coloursForMemArgs) = (colourToMemArg_, coloursForMemArgs_)
       where
-        stackArgs = drop (length argPassingRegisters) args
-    localRegisters = S.toList $ S.fromList (
-      mapMaybe extractRegister $
-      TransLLVM.listValsInFunc function) S.\\
-      S.fromList typedStackRegisters
+        colourToMemArg_ = M.fromList $ map swap $
+            filter highColour $ filter isMemArgument $ M.toList regColours
+        coloursForMemArgs_ = sort $ nub $ map snd $ filter highColour $ filter isMemArgument $ M.toList regColours
+        highColour (_, num) = num >= length allocatedRegisters
+        isMemArgument (LLVM.RArgument argName, _) =
+          maybe (error "unreachable") (>= length argPassingRegisters) (elemIndex argName (map snd args))
+        isMemArgument _ = False
+
+    regArgs :: [Register]
+    regArgs = nub (M.elems regArgColourToReg)
+    coloursForRegArgs :: [Int]
+    coloursForRegArgs = M.keys regArgColourToReg
+    regArgColourToReg :: M.Map Int Register
+    regArgColourToReg = M.fromList (mapMaybe argNumToRegister colourToArgNum)
+      where
+        colourToArgNum :: [(Int, Int)]
+        colourToArgNum = mapMaybe (extractArgNum . swap) (M.toList regColours)
+        extractArgNum :: (Int, LLVM.Register) -> Maybe (Int, Int)
+        extractArgNum (colour, LLVM.RArgument name_) = Just (colour, argPosition name_)
+        extractArgNum _ = Nothing
+        argNumToRegister (colour, num) | num < length argPassingRegisters =
+          Just (colour, argPassingRegisters !! num)
+        argNumToRegister _ = Nothing
+      -- map snd (take (length argPassingRegisters) args)
+    memArgToAddress (LLVM.RArgument name_) =
+      argPassingPositions 16 Rrbp !! argPosition name_
+    memArgToAddress _ = error "unreachable"
+
+    argPosition :: String -> Int
+    argPosition argName = let Just i = elemIndex argName (map snd args) in i
+
+    colourToMem = M.map memArgToAddress colourToMemArg `M.union`
+      M.map VRegister regArgColourToReg `M.union`
+      M.fromList (
+      zip ((distinctColours \\ coloursForMemArgs) \\ coloursForRegArgs)
+           (map VRegister (allocatedRegisters \\ regArgs) ++
+            [VAddress num Rrbp | num <- [offset, offset-8..]]))
+      where
+        offset =  -- save place for register backup
+          - 8 - length allocatedRegisters * 8
+
     storeArgs = [IMov size (VRegister (castRegister passReg size))
                             (reg2Mem M.! LLVM.RArgument val)
                  | (passReg, (type_, val)) <- zip argPassingRegisters args
                  , let size = typeToSize type_ ] ++
-                [ISubq (VConst (toInteger (align16 localsSpace)))
-                       (VRegister Rrsp)]
-      where
-        localsSpace = if null localsLayout then 0 else - last localsLayout
-    localsLayout = scanl1 (+) [-sizeToInt (typeToSize type_) | (type_, _) <- localRegisters]
-
-    extractRegister (type_, LLVM.VRegister reg) = Just (type_, reg)
-    extractRegister _ = Nothing
-    reg2Mem =
-      M.fromList (zip (map snd localRegisters)
-                      (map (`VAddress` Rrbp) localsLayout) ++
-                  zip (map snd typedStackRegisters)
-                      (argPassingPositions 16 Rrbp))
+                [ISubq (VConst (toInteger
+                                (align16 (8 * length distinctColours))))
+                       (VRegister Rrsp)] ++
+                concat [ smartmov size passAddr (reg2Mem M.! LLVM.RArgument val)
+                | (passAddr, (type_, val)) <- zip (argPassingPositions 16 Rrbp) (drop (length argPassingRegisters) args)
+                , let size = typeToSize type_ ]
 
     splitEdges =
       mapMaybe goBlock blocks
@@ -121,19 +196,8 @@ transFunc function@(LLVM.Function _ name args blocks) =
       Block (phiLabel srcLabel dstLabel name) $
         execWriter (transPhis collectedPhis srcLabel dstLabel reg2Mem) ++
         [IJmp (transLabel dstLabel name)]
-    collectedPhis :: CollectedPhis
-    collectedPhis =
-      M.unionsWith (++) (concatMap goBlock blocks)
-      where
-        goBlock block = map goInstr (LLVM.bInnerInstrs block)
-          where
-            goInstr (LLVM.IPhi type_ pairs reg) = M.fromList
-              [ ((srcBlock, LLVM.bLabel block), [(type_, reg, val)])
-              | (val, srcBlock) <- pairs]
-            goInstr _ = M.empty
-
-type CollectedPhis = M.Map (LLVM.Label, LLVM.Label)
-                        [(LLVM.Type, LLVM.Register, LLVM.Value)]
+    collectedPhis :: TransLLVM.CollectedPhis
+    collectedPhis = TransLLVM.collectPhis function
 
 align16 :: Int -> Int
 align16 num = num + ((16 - num `mod` 16) `mod` 16)
@@ -145,36 +209,41 @@ phiLabel :: LLVM.Label -> LLVM.Label -> String -> String
 phiLabel (LLVM.Label src) (LLVM.Label dst) fName =
   "phi_" ++ fName ++ "_" ++ show src ++ "_" ++ show dst
 
-transBlock :: LLVM.Block -> String -> Reg2Mem -> CollectedPhis -> [TopDef]
+transBlock :: LLVM.Block -> String -> Reg2Mem -> TransLLVM.CollectedPhis
+              -> [TopDef]
 transBlock (LLVM.Block label innerInstrs exitInstr) functionName reg2Mem collectedPhis =
   [Block (transLabel label functionName)
    (concatMap (\instr -> transInstr instr functionName reg2Mem collectedPhis label)
               (innerInstrs ++ [exitInstr]))]
 
-transInstr :: LLVM.Instr -> String -> Reg2Mem -> CollectedPhis -> LLVM.Label -> [Instr]
+transInstr :: LLVM.Instr -> String -> Reg2Mem -> TransLLVM.CollectedPhis
+              -> LLVM.Label -> [Instr]
 transInstr instr str reg2Mem collectedPhis label =
   execWriter (transInstrM instr str reg2Mem collectedPhis label)
 
-transInstrM :: LLVM.Instr -> String -> Reg2Mem -> CollectedPhis -> LLVM.Label -> InstrWriter ()
+transInstrM :: LLVM.Instr -> String -> Reg2Mem -> TransLLVM.CollectedPhis
+               -> LLVM.Label -> InstrWriter ()
 transInstrM (LLVM.ICall fType name args mResultReg) _ reg2Mem _ _ = do
   argPushInstrs
+  saveRegisters
   tell [ICall $ "_" ++ name]
   argPopInstrs
+  restoreRegisters
   saveResult
   where
     stackArgs = length args - 6
     argPushInstrs = do
-      mapM_ (\ ((type_, value), reg) -> do
+      mapM_ (\ ((type_, value), dstVal) -> do
         let size = typeToSize type_
         val <- transVal value reg2Mem
-        tell [IMov size val (VRegister (castRegister reg size))])
-        (zip args argPassingRegisters)
+        tell $ smartmov size val (castVal dstVal size))
+        (zip args safeArgPassingPositions)
       when (stackArgs > 0) $
         tell [ISubq (VConst (toInteger (align16 (8 * stackArgs)))) (VRegister Rrsp)]
       mapM_ (\ ((type_, value), dstVal) -> do
         let size = typeToSize type_
         val <- transVal value reg2Mem
-        tell [IMov size val dstVal])
+        tell $ smartmov size val dstVal)
         (zip (drop (length argPassingRegisters) args)
              (argPassingPositions 0 Rrsp))
     argPopInstrs =
@@ -185,6 +254,19 @@ transInstrM (LLVM.ICall fType name args mResultReg) _ reg2Mem _ _ = do
       let retSize = typeToSize fType
       tell [IMov retSize
                  (VRegister (castRegister Rrax retSize)) val]) mResultReg
+    saveRegisters =
+      mapM_ (\(reg, backup) -> tell [IXchg SQuad (VRegister reg) backup]) usedRegisters
+    restoreRegisters =
+      mapM_ (\(reg, backup) -> tell [IXchg SQuad backup (VRegister reg)]) usedRegisters
+    usedRegisters = zip (usedQuadRegisters reg2Mem)
+                        [VAddress num Rrbp | num <- [-8, -16..]]
+    safeArgPassingPositions = map backup argPassingRegisters
+      where
+        backup reg = fromMaybe (VRegister reg) (lookup reg usedRegisters)
+    castVal :: Value -> Size -> Value
+    castVal val size = case val of VRegister reg -> VRegister $ castRegister reg size
+                                   _ -> val
+
 transInstrM (LLVM.IRet type_ val) _ reg2Mem _ _ = do
   tv <- transVal val reg2Mem
   let size = typeToSize type_
@@ -200,8 +282,8 @@ transInstrM (LLVM.IArithm _ v1 v2 op reg) _ mem2Reg _ _
   tres <- transVal (LLVM.VRegister reg) mem2Reg
   tell [ IMov SLong tv1 (VRegister Reax)
        , ICdq
-       , IMov SLong tv2 (VRegister Rebx)
-       , IDivl (VRegister Rebx)
+       , IMov SLong tv2 (VRegister Recx)
+       , IDivl (VRegister Recx)
        , IMov SLong (VRegister (if op == LLVM.OSDiv then Reax else Rrdx))
                tres
        ]
@@ -261,16 +343,21 @@ transInstrM LLVM.IAlloca {} _ _ _ _ =
 transInstrM LLVM.IUnreachable _ _ _ _ =
   error "transInstrM LLVM.IUnreachable: unreachable"
 
-transPhis :: CollectedPhis -> LLVM.Label -> LLVM.Label -> Reg2Mem
+transPhis :: TransLLVM.CollectedPhis -> LLVM.Label -> LLVM.Label -> Reg2Mem
              -> InstrWriter ()
-transPhis collectedPhis srcLabel dstLabel reg2Mem =
-  mapM_ (\(type_, reg, val) -> do
+transPhis collectedPhis srcLabel dstLabel reg2Mem = do
+  mapM_ (\((type_, _, val), tempAddr) -> do
     tv <- transVal val reg2Mem
+    let size = typeToSize type_
+    tell $ smartmov size tv tempAddr) (zip phis temporaries)
+  mapM_ (\(tempAddr, (type_, reg, _)) -> do
     res <- transVal (LLVM.VRegister reg) reg2Mem
     let size = typeToSize type_
-    tell [ IMov size tv (VRegister (castRegister Rrax size))
-         , IMov size (VRegister (castRegister Rrax size)) res
-         ]) $ M.findWithDefault [] (srcLabel, dstLabel) collectedPhis
+    tell $ smartmov size tempAddr res) (zip temporaries phis)
+
+  where
+    phis = M.findWithDefault [] (srcLabel, dstLabel) collectedPhis
+    temporaries = [VAddress num Rrsp | num <- [-8, -16..]]
 
 transVal :: LLVM.Value -> Reg2Mem -> InstrWriter Value
 transVal (LLVM.VConst num) _ = return $ VConst num
@@ -308,6 +395,8 @@ showInstr :: Instr -> String
 showInstr (IPushq val) = "pushq " ++ showVal val
 showInstr (IMov size val1 val2) =
   "mov" ++ showSuffix size ++ " " ++ showVal val1 ++ ", " ++ showVal val2
+showInstr (IXchg size val1 val2) =
+  "xchg" ++ showSuffix size ++ " " ++ showVal val1 ++ ", " ++ showVal val2
 showInstr (ISubl val1 val2) = "subl " ++ showVal val1 ++ ", " ++ showVal val2
 showInstr (ISubq val1 val2) = "subq " ++ showVal val1 ++ ", " ++ showVal val2
 showInstr (IImull val1 val2) = "imull " ++ showVal val1 ++ ", " ++ showVal val2
@@ -377,11 +466,6 @@ typeToSize LLVM.Ti8Ptr = SQuad
 typeToSize LLVM.Ti1 = SByte
 typeToSize _ = error "typeToSize: unreachable"
 
-sizeToInt :: Size -> Int
-sizeToInt size = case size of SLong -> 4
-                              SQuad -> 8
-                              SByte -> 1
-
 castRegister :: Register -> Size -> Register
 castRegister reg SLong = case reg of
   Rrdi -> Redi
@@ -402,4 +486,69 @@ castRegister reg SByte = case reg of
   Rr9 -> Rr9b
   Rrax -> Ral
   _ -> error "castRegister: unreachable"
-castRegister reg SQuad = reg
+castRegister reg SQuad = case reg of
+  Redi -> Rrdi
+  Resi -> Rrsi
+  Redx -> Rrdx
+  Recx -> Rrcx
+  Rr8d -> Rr8
+  Rr9d -> Rr9
+  Reax -> Rrax
+
+  Rdil -> Rrdi
+  Rsil -> Rrsi
+  Rdl -> Rrdx
+  Rcl -> Rrcx
+  Rr8b -> Rr8
+  Rr9b -> Rr9
+  Ral -> Rrax
+
+  Rrdi -> Rrdi
+  Rrsi -> Rrsi
+  Rrdx -> Rrdx
+  Rrcx -> Rrcx
+  Rr8 -> Rr8
+  Rr9 -> Rr9
+  Rrax -> Rrax
+
+  _ -> error "castRegister _ SQuad: unreachable"
+
+colourGraph :: forall a. Ord a => ([a], [(a, a)]) -> M.Map a Int
+{- http://web.cs.ucla.edu/~palsberg/paper/aplas05.pdf
+   Register Allocation via Colouring of Chordal Graphs.
+   Figure 4 and 5. -}
+colourGraph (vertices, edges) =
+  foldl colourVertex M.empty mcsOrder
+  where
+    colourVertex :: M.Map a Int -> a -> M.Map a Int
+    colourVertex partialColouring vertex =
+      M.insert vertex myColour partialColouring
+      where
+        myColour :: Int
+        myColour = lowestNotIn (mapMaybe (`M.lookup` partialColouring)
+                                (neighbours vertex))
+
+    neighbours :: a -> [a]
+    neighbours vertex = [ neigh | (a, b) <- edges
+                                , let neigh = if a == vertex then b else a
+                                , a == vertex || b == vertex]
+    lowestNotIn :: [Int] -> Int
+    lowestNotIn list = head ([0..] \\ list)
+
+    mcsOrder :: [a]
+    mcsOrder = result
+      where
+        (_, _, result) = foldl go (vertices, zip vertices [0..], []) vertices
+        go :: ([a], [(a, Int)], [a]) -> a -> ([a], [(a, Int)], [a])
+        go (remaining, lambda, pResult) _ =
+          let (cur, _) = maxLambda in
+          (remaining \\ [cur],
+           [(ver, val) | (ver, oldVal) <- lambda
+                       , let val = if ver `elem` neighbours cur
+                                   then oldVal + 1 else oldVal],
+           pResult ++ [cur])
+          where
+            remainingLambda = filter (\(key, _) -> key `elem` remaining) lambda
+            maxLambda = foldl (\ maxT@(maxKey, _) curT@(curKey, _) ->
+                if curKey > maxKey then curT else maxT)
+                        (head remainingLambda) remainingLambda

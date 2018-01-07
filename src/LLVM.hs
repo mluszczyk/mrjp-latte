@@ -16,7 +16,7 @@ data Value = VConst Integer
                deriving (Eq, Ord)
 
 data Register = Register Int | RArgument String
-              deriving (Eq, Ord)
+              deriving (Eq, Ord, Show)
 
 data Type = Ti32 | Tvoid | Ti1 | Ti8Ptr deriving (Eq, Ord)
 data Instr = ICall Type String [(Type, Value)] (Maybe Register)

@@ -9,11 +9,13 @@ import qualified Data.Map as M
 import qualified LLVM
 import qualified Data.Set as S
 import qualified Data.Set.Extra as SE
-import Data.Maybe (fromMaybe, mapMaybe, isNothing)
+import Data.Tuple (swap)
+import Data.Maybe (fromMaybe, mapMaybe, isNothing, maybeToList)
 import Data.Bool (bool)
 import Control.Monad.State (evalStateT, runState, get, put, StateT, State, when)
 import qualified CompilerErr as CE
 import qualified CompilerState as CS
+import Control.Arrow (second)
 
 instrsToBlocks :: [LLVM.Instr] -> [LLVM.Block]
 instrsToBlocks [] = []
@@ -50,16 +52,8 @@ removeUnreachableBlocks function@LLVM.Function { LLVM.fBlocks = blocks} =
       (map (mapBlockInstrs updatePhi) blocks) }
 
   where
-    instrNeighbours :: LLVM.Instr -> [LLVM.Label]
-    instrNeighbours (LLVM.IBr label) = [label]
-    instrNeighbours (LLVM.IBrCond _ _ label1 label2) = [label1, label2]
-    instrNeighbours _ = []
     neighbours :: LLVM.Label -> [LLVM.Label]
-    neighbours = instrNeighbours . LLVM.bExitInstr . getBlock
-    getBlock :: LLVM.Label -> LLVM.Block
-    getBlock label = head $
-      filter (\ LLVM.Block { LLVM.bLabel = label' } -> (label == label'))
-        blocks
+    neighbours = instrNeighbours . LLVM.bExitInstr . (`blockByLabel` function)
     startingLabel :: LLVM.Label
     startingLabel = LLVM.bLabel (head blocks)
     follow :: S.Set LLVM.Label -> S.Set LLVM.Label
@@ -71,6 +65,16 @@ removeUnreachableBlocks function@LLVM.Function { LLVM.fBlocks = blocks} =
       where
         newPairs = filter (\(_, label) -> label `S.member` reachable) pairs
     updatePhi other = other
+
+blockByLabel :: LLVM.Label -> LLVM.Function -> LLVM.Block
+blockByLabel label function = head $
+  filter (\ LLVM.Block { LLVM.bLabel = label' } -> (label == label'))
+    (LLVM.fBlocks function)
+
+instrNeighbours :: LLVM.Instr -> [LLVM.Label]
+instrNeighbours (LLVM.IBr label) = [label]
+instrNeighbours (LLVM.IBrCond _ _ label1 label2) = [label1, label2]
+instrNeighbours _ = []
 
 fixEq :: (Eq a) => (a -> a) -> a -> a
 fixEq follow prev = let next = follow prev in
@@ -236,25 +240,60 @@ filterInnerInstrs shouldStay function = function {
 
 listInstrs :: LLVM.Function -> [LLVM.Instr]
 listInstrs function = concatMap listBlockInstrs (LLVM.fBlocks function)
-listValsInInstr :: LLVM.Instr -> [(LLVM.Type, LLVM.Value)]
-listValsInInstr instr = case instr of
-  LLVM.ICall retType _ args mReg ->
-    args ++ maybe [] (\r -> [(retType, LLVM.VRegister r)]) mReg
+
+accessedVals :: LLVM.Instr -> [(LLVM.Type, LLVM.Value)]
+accessedVals instr = case instr of
+  LLVM.ICall _ _ args _ -> args
   LLVM.IRetVoid -> []
   LLVM.IRet type_ v -> [(type_, v)]
-  LLVM.IArithm type_ v1 v2 _ r -> [(type_, v1), (type_, v2), (type_, LLVM.VRegister r)]
+  LLVM.IArithm type_ v1 v2 _ _ -> [(type_, v1), (type_, v2)]
   LLVM.IBr _ -> []
   LLVM.IBrCond type_ v _ _-> [(type_, v)]
   LLVM.ILabel _ -> []
-  LLVM.ILoad typeVal typePtr r1 r2 -> -- TODO: inaccurate
-    [(typeVal, LLVM.VRegister r1), (typePtr, LLVM.VRegister r2)]
-  LLVM.IStore typeVal val typeReg reg -> [(typeVal, val), (typeReg, LLVM.VRegister reg)]
-  LLVM.IAlloca type_ reg ->  -- TODO: this may be inaccurate
-    [(type_, LLVM.VRegister reg)]
-  LLVM.IIcmp _ type_ v1 v2 reg -> [(type_, v1), (type_, v2), (LLVM.Ti1, LLVM.VRegister reg)]
-  LLVM.IPhi type_ pairs reg ->
-   (type_, LLVM.VRegister reg) : map (\p -> (type_, fst p)) pairs
+  LLVM.ILoad _ typePtr _ r2 -> -- TODO: type inaccurate
+    [(typePtr, LLVM.VRegister r2)]
+  LLVM.IStore typeVal val _ _ -> [(typeVal, val)]
+  LLVM.IAlloca _ _ -> []
+  LLVM.IIcmp _ type_ v1 v2 _ -> [(type_, v1), (type_, v2)]
+  LLVM.IPhi type_ pairs _ ->
+   map (\p -> (type_, fst p)) pairs
   LLVM.IUnreachable -> []
+
+setRegisters :: LLVM.Instr -> [(LLVM.Type, LLVM.Register)]
+setRegisters instr = case instr of
+  LLVM.ICall retType _ _ mReg ->
+    maybe [] (\r -> [(retType, r)]) mReg
+  LLVM.IRetVoid -> []
+  LLVM.IRet _ _ -> []
+  LLVM.IArithm type_ _ _ _ r -> [(type_, r)]
+  LLVM.IBr _ -> []
+  LLVM.IBrCond {} -> []
+  LLVM.ILabel _ -> []
+  LLVM.ILoad typeVal _ r1 _ ->
+    [(typeVal, r1)]
+  LLVM.IStore _ _ typeReg reg ->  -- TODO: inacurate type
+    [(typeReg, reg)]
+  LLVM.IAlloca type_ reg ->  -- TODO: inaccurate type
+    [(type_, reg)]
+  LLVM.IIcmp _ _ _ _ reg -> [(LLVM.Ti1, reg)]
+  LLVM.IPhi type_ _ reg -> [(type_, reg)]
+  LLVM.IUnreachable -> []
+
+listRegisters :: LLVM.Function -> [(LLVM.Type, LLVM.Register)]
+listRegisters function = S.toList $ S.fromList (
+  map (second LLVM.RArgument) (LLVM.fArgs function) ++
+  mapMaybe extractRegister (listValsInFunc function))
+
+registerType :: LLVM.Function -> M.Map LLVM.Register LLVM.Type
+registerType function = M.fromList (map swap (listRegisters function))
+
+extractRegister :: (LLVM.Type, LLVM.Value) -> Maybe (LLVM.Type, LLVM.Register)
+extractRegister (type_, LLVM.VRegister reg) = Just (type_, reg)
+extractRegister _ = Nothing
+
+listValsInInstr :: LLVM.Instr -> [(LLVM.Type, LLVM.Value)]
+listValsInInstr instr = accessedVals instr ++
+  map (second LLVM.VRegister) (setRegisters instr)
 
 listValsInFunc :: LLVM.Function -> [(LLVM.Type, LLVM.Value)]
 listValsInFunc func =
@@ -387,3 +426,95 @@ removeTrivialPhis function =
     valUpdate = M.fromList (mapMaybe extractTrivialPhi (listInstrs function))
     follow mapping = M.map (\x -> fromMaybe x (M.lookup x mapping)) mapping
     valUpdateFix = fixEq follow valUpdate
+
+collectPhis :: LLVM.Function -> CollectedPhis
+collectPhis LLVM.Function { LLVM.fBlocks = blocks } =
+  M.unionsWith (++) (concatMap goBlock blocks)
+  where
+    goBlock block = map goInstr (LLVM.bInnerInstrs block)
+      where
+        goInstr (LLVM.IPhi type_ pairs reg) = M.fromList
+          [ ((srcBlock, LLVM.bLabel block), [(type_, reg, val)])
+          | (val, srcBlock) <- pairs]
+        goInstr _ = M.empty
+
+type CollectedPhis = M.Map (LLVM.Label, LLVM.Label)
+                  [(LLVM.Type, LLVM.Register, LLVM.Value)]
+
+
+inferenceGraph :: LLVM.Function
+                  -> ([LLVM.Register], [(LLVM.Register, LLVM.Register)])
+inferenceGraph function = (registers, edges)
+
+ where
+   registers = map snd $ listRegisters function
+
+   edges :: [(LLVM.Register, LLVM.Register)]
+   edges = S.toList $ S.unions $ concatMap
+             (map (\instrPos ->
+                    let out = S.toList $ liveIn instrPos in S.fromList
+                    [order (reg1, reg2) | reg1 <- out, reg2 <- out,
+                                    reg1 /= reg2])
+              . enumerateInstructions) (LLVM.fBlocks function)
+     where
+       order (reg1, reg2) | reg1 < reg2 = (reg1, reg2)
+                          | reg1 > reg2 = (reg2, reg1)
+                          | otherwise = error "unreachable"
+   enumerateInstructions block =
+     [(block, instr, num)
+        | (num, instr) <- zip [0::Int ..]
+          (LLVM.bInnerInstrs block ++ [LLVM.bExitInstr block])]
+
+   extractUntypedRegister val = case val of LLVM.VRegister reg -> Just reg
+                                            _ -> Nothing
+
+   liveIn instrPos = blockLiveInTrans (cutBlock instrPos)
+                                      allLiveIn
+     where
+       cutBlock (block, _, pos) =
+         block { LLVM.bInnerInstrs = drop pos (LLVM.bInnerInstrs block)}
+
+   instrLiveOutTrans :: LLVM.Instr
+                        -> S.Set LLVM.Register
+                        -> S.Set LLVM.Register
+   instrLiveOutTrans LLVM.IPhi {} inSet = inSet
+   instrLiveOutTrans instr inSet =
+     gen `S.union` (inSet S.\\ kill)
+     where
+       gen :: S.Set LLVM.Register
+       gen = S.fromList $ map snd $ mapMaybe extractRegister $ accessedVals instr
+       kill :: S.Set LLVM.Register
+       kill = S.fromList $ map snd (setRegisters instr)
+
+   allLiveIn :: M.Map LLVM.Label (S.Set LLVM.Register)
+   allLiveIn = fixEq followLiveIn (M.fromList (
+      map (\block -> (LLVM.bLabel block, S.empty)) (LLVM.fBlocks function)))
+     where
+       followLiveIn :: M.Map LLVM.Label (S.Set LLVM.Register)
+                       -> M.Map LLVM.Label (S.Set LLVM.Register)
+       followLiveIn cur = M.mapWithKey (\label _ -> blockLiveInTrans (blockByLabel label function) cur) cur
+   blockLiveInTrans :: LLVM.Block
+                       -> M.Map LLVM.Label (S.Set LLVM.Register)
+                       -> S.Set LLVM.Register
+   blockLiveInTrans block allLiveIn_ =
+     foldr instrLiveOutTrans
+           (instrLiveOutTrans (LLVM.bExitInstr block)
+                              (blockLiveOutFollow block allLiveIn_))
+           (LLVM.bInnerInstrs block)
+
+   collectedPhis = collectPhis function
+
+   blockLiveOutFollow :: LLVM.Block
+                       -> M.Map LLVM.Label (S.Set LLVM.Register)
+                       -> S.Set LLVM.Register
+   blockLiveOutFollow block allLiveIn_ = S.unions $
+    map (uncurry processPhis) $
+    filter (\(label, _) -> label `elem` instrNeighbours (LLVM.bExitInstr block)) $
+    M.toList allLiveIn_
+    where
+      processPhis :: LLVM.Label -> S.Set LLVM.Register -> S.Set LLVM.Register
+      processPhis dstLabel inSet =
+        foldr (\ (_, reg, val) phiOut ->
+                S.fromList (maybeToList (extractUntypedRegister val))
+                `S.union` phiOut S.\\ S.singleton reg) inSet
+        (M.findWithDefault [] (LLVM.bLabel block, dstLabel) collectedPhis)
