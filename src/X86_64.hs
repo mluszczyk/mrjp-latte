@@ -19,16 +19,14 @@ newtype Module = Module [TopDef]
 data TopDef = Globl String
               | Block String [Instr]
               | Asciz String String
-data Instr = IPushq Value
+data Instr = IPush Size Value
              | IMov Size Value Value
              | IXchg Size Value Value
              | ILeaq Value Value
-             | ISubl Value Value
-             | ISubq Value Value
-             | IImull Value Value
-             | IAddl Value Value
-             | IAddq Value Value
-             | IDivl Value
+             | ISub Size Value Value
+             | IImul Size Value Value
+             | IAdd Size Value Value
+             | IDiv Size Value
              | ICdq
              | ICall String
              | IJmp String
@@ -104,76 +102,68 @@ usedQuadRegisters reg2Mem = nub (map (`castRegister` SQuad) (mapMaybe extractReg
 transFunc :: LLVM.Function -> [TopDef]
 transFunc function@(LLVM.Function _ name args blocks) =
   Globl ("_" ++ name) :
-  Block ("_" ++ name) ([ IPushq (VRegister Rrbp)
+  Block ("_" ++ name) ([ IPush SQuad (VRegister Rrbp)
                        , IMov SQuad (VRegister Rrsp) (VRegister Rrbp)
                        ] ++ storeArgs) :
   concatMap (\block -> transBlock block name reg2Mem collectedPhis) blocks ++
   map (uncurry transSplitEdge) splitEdges
 
-  {- + construct inference graph -> (Vertices, Edges)
-     + colour the graph (map LLVM.Register Colour) Colour = Int
-     + map Colour Value,
-       mind that some args are already in the memory
-     move args from stack to registers if needed
-     move args from registers to stack if needed
-     if using callee saved register, save their value
-     + changes: at function calls, save all (used) caller saved registers
-     +          handle phis correctly
-   -}
- -- TOOD: make sure that no two args have the same place in memory (unused args)
   where
-    regType = TransLLVM.registerType function
     reg2Mem :: Reg2Mem
     reg2Mem = M.mapWithKey (\reg val -> castVal val (regType M.! reg))
                            (M.map (colourToMem M.!) regColours)
      where
+       regType = TransLLVM.registerType function
+
        castVal (VRegister reg) type_ =
          VRegister (castRegister reg (typeToSize type_))
        castVal val _ = val
+
+       (colourToMemArg, coloursForMemArgs) = (colourToMemArg_, coloursForMemArgs_)
+         where
+           colourToMemArg_ = M.fromList $ map swap memArgs
+           coloursForMemArgs_ = sort $ nub $ map snd memArgs
+           memArgs = filter highColour $ filter isMemArgument $ M.toList regColours
+           highColour (_, num) = num >= length allocatedRegisters
+           isMemArgument (LLVM.RArgument argName, _) =
+             maybe (error "unreachable") (>= length argPassingRegisters) (elemIndex (Just argName) (map snd args))
+           isMemArgument _ = False
+
+       regArgs :: [Register]
+       regArgs = nub (M.elems regArgColourToReg)
+       coloursForRegArgs :: [Int]
+       coloursForRegArgs = M.keys regArgColourToReg
+       regArgColourToReg :: M.Map Int Register
+       regArgColourToReg = M.fromList (mapMaybe argNumToRegister colourToArgNum)
+         where
+           colourToArgNum :: [(Int, Int)]
+           colourToArgNum = mapMaybe (extractArgNum . swap) (M.toList regColours)
+           extractArgNum :: (Int, LLVM.Register) -> Maybe (Int, Int)
+           extractArgNum (colour, LLVM.RArgument name_) = Just (colour, argPosition name_)
+           extractArgNum _ = Nothing
+           argNumToRegister (colour, num) | num < length argPassingRegisters =
+             Just (colour, argPassingRegisters !! num)
+           argNumToRegister _ = Nothing
+
+       memArgToAddress (LLVM.RArgument name_) =
+         argPassingPositions 16 Rrbp !! argPosition name_
+       memArgToAddress _ = error "unreachable"
+
+       argPosition :: String -> Int
+       argPosition argName = let Just i = elemIndex (Just argName) (map snd args) in i
+
+       colourToMem = M.map memArgToAddress colourToMemArg `M.union`
+         M.map VRegister regArgColourToReg `M.union`
+         M.fromList (
+         zip ((distinctColours \\ coloursForMemArgs) \\ coloursForRegArgs)
+              (map VRegister (allocatedRegisters \\ regArgs) ++
+               [VAddress num Rrbp | num <- [offset, offset-8..]]))
+         where
+           offset =  -- save place for register backup
+             - 8 - length allocatedRegisters * 8
+
     regColours = colourGraph (TransLLVM.inferenceGraph function)
     distinctColours = nub (sort (M.elems regColours))
-    (colourToMemArg, coloursForMemArgs) = (colourToMemArg_, coloursForMemArgs_)
-      where
-        colourToMemArg_ = M.fromList $ map swap $
-            filter highColour $ filter isMemArgument $ M.toList regColours
-        coloursForMemArgs_ = sort $ nub $ map snd $ filter highColour $ filter isMemArgument $ M.toList regColours
-        highColour (_, num) = num >= length allocatedRegisters
-        isMemArgument (LLVM.RArgument argName, _) =
-          maybe (error "unreachable") (>= length argPassingRegisters) (elemIndex (Just argName) (map snd args))
-        isMemArgument _ = False
-
-    regArgs :: [Register]
-    regArgs = nub (M.elems regArgColourToReg)
-    coloursForRegArgs :: [Int]
-    coloursForRegArgs = M.keys regArgColourToReg
-    regArgColourToReg :: M.Map Int Register
-    regArgColourToReg = M.fromList (mapMaybe argNumToRegister colourToArgNum)
-      where
-        colourToArgNum :: [(Int, Int)]
-        colourToArgNum = mapMaybe (extractArgNum . swap) (M.toList regColours)
-        extractArgNum :: (Int, LLVM.Register) -> Maybe (Int, Int)
-        extractArgNum (colour, LLVM.RArgument name_) = Just (colour, argPosition name_)
-        extractArgNum _ = Nothing
-        argNumToRegister (colour, num) | num < length argPassingRegisters =
-          Just (colour, argPassingRegisters !! num)
-        argNumToRegister _ = Nothing
-      -- map snd (take (length argPassingRegisters) args)
-    memArgToAddress (LLVM.RArgument name_) =
-      argPassingPositions 16 Rrbp !! argPosition name_
-    memArgToAddress _ = error "unreachable"
-
-    argPosition :: String -> Int
-    argPosition argName = let Just i = elemIndex (Just argName) (map snd args) in i
-
-    colourToMem = M.map memArgToAddress colourToMemArg `M.union`
-      M.map VRegister regArgColourToReg `M.union`
-      M.fromList (
-      zip ((distinctColours \\ coloursForMemArgs) \\ coloursForRegArgs)
-           (map VRegister (allocatedRegisters \\ regArgs) ++
-            [VAddress num Rrbp | num <- [offset, offset-8..]]))
-      where
-        offset =  -- save place for register backup
-          - 8 - length allocatedRegisters * 8
 
     storeArgs = [IMov size (VRegister (castRegister passReg size))
                             (reg2Mem M.! LLVM.RArgument val)
@@ -181,7 +171,7 @@ transFunc function@(LLVM.Function _ name args blocks) =
                  , isJust mVal
                  , let size = typeToSize type_
                        Just val = mVal ] ++
-                [ISubq (VConst (toInteger
+                [ISub SQuad (VConst (toInteger
                                 (align16 (8 * length distinctColours))))
                        (VRegister Rrsp)] ++
                 concat [ smartmov size passAddr (reg2Mem M.! LLVM.RArgument val)
@@ -201,6 +191,7 @@ transFunc function@(LLVM.Function _ name args blocks) =
       Block (phiLabel srcLabel dstLabel name) $
         execWriter (transPhis collectedPhis srcLabel dstLabel reg2Mem) ++
         [IJmp (transLabel dstLabel name)]
+
     collectedPhis :: TransLLVM.CollectedPhis
     collectedPhis = TransLLVM.collectPhis function
 
@@ -244,7 +235,7 @@ transInstrM (LLVM.ICall fType name args mResultReg) _ reg2Mem _ _ = do
         tell $ smartmov size val (castVal dstVal size))
         (zip args safeArgPassingPositions)
       when (stackArgs > 0) $
-        tell [ISubq (VConst (toInteger (align16 (8 * stackArgs)))) (VRegister Rrsp)]
+        tell [ISub SQuad (VConst (toInteger (align16 (8 * stackArgs)))) (VRegister Rrsp)]
       mapM_ (\ ((type_, value), dstVal) -> do
         let size = typeToSize type_
         val <- transVal value reg2Mem
@@ -253,7 +244,7 @@ transInstrM (LLVM.ICall fType name args mResultReg) _ reg2Mem _ _ = do
              (argPassingPositions 0 Rrsp))
     argPopInstrs =
       when (stackArgs > 0) $
-        tell [IAddq (VConst (toInteger (align16 (8 * stackArgs)))) (VRegister Rrsp)]
+        tell [IAdd SQuad (VConst (toInteger (align16 (8 * stackArgs)))) (VRegister Rrsp)]
     saveResult = maybe (tell []) (\reg -> do
       val <- transVal (LLVM.VRegister reg) reg2Mem
       let retSize = typeToSize fType
@@ -288,7 +279,7 @@ transInstrM (LLVM.IArithm _ v1 v2 op reg) _ mem2Reg _ _
   tell [ IMov SLong tv1 (VRegister Reax)
        , ICdq
        , IMov SLong tv2 (VRegister Recx)
-       , IDivl (VRegister Recx)
+       , IDiv SLong (VRegister Recx)
        , IMov SLong (VRegister (if op == LLVM.OSDiv then Reax else Rrdx))
                tres
        ]
@@ -298,14 +289,14 @@ transInstrM (LLVM.IArithm _ v1 v2 op reg) _ mem2Reg _ _ = do
   tv2 <- transVal v2 mem2Reg
   res <- transVal (LLVM.VRegister reg) mem2Reg
   tell [ IMov SLong tv1 (VRegister Reax)
-        , asmOp tv2 (VRegister Reax)
+        , asmOp SLong tv2 (VRegister Reax)
         , IMov SLong (VRegister Reax) res
         ]
   where
     asmOp = case op of
-      LLVM.OSub -> ISubl
-      LLVM.OMul -> IImull
-      LLVM.OAdd -> IAddl
+      LLVM.OSub -> ISub
+      LLVM.OMul -> IImul
+      LLVM.OAdd -> IAdd
       _ -> error "asmOp: unreachable"
 
 transInstrM (LLVM.IBr label) fName reg2Mem collectedPhis curLabel = do
@@ -397,17 +388,18 @@ showTopDef (Asciz name value) = [name ++ ":", "  .asciz \"" ++ escape value ++ "
     escape (a : s) = a : escape s
 
 showInstr :: Instr -> String
-showInstr (IPushq val) = "pushq " ++ showVal val
+showInstr (IPush size val) = "push" ++ showSuffix size ++ " " ++ showVal val
 showInstr (IMov size val1 val2) =
   "mov" ++ showSuffix size ++ " " ++ showVal val1 ++ ", " ++ showVal val2
 showInstr (IXchg size val1 val2) =
   "xchg" ++ showSuffix size ++ " " ++ showVal val1 ++ ", " ++ showVal val2
-showInstr (ISubl val1 val2) = "subl " ++ showVal val1 ++ ", " ++ showVal val2
-showInstr (ISubq val1 val2) = "subq " ++ showVal val1 ++ ", " ++ showVal val2
-showInstr (IImull val1 val2) = "imull " ++ showVal val1 ++ ", " ++ showVal val2
-showInstr (IAddl val1 val2) = "addl " ++ showVal val1 ++ ", " ++ showVal val2
-showInstr (IAddq val1 val2) = "addq " ++ showVal val1 ++ ", " ++ showVal val2
-showInstr (IDivl val) = "divl " ++ showVal val
+showInstr (ISub size val1 val2) =
+  "sub" ++ showSuffix size ++ " " ++ showVal val1 ++ ", " ++ showVal val2
+showInstr (IImul size val1 val2) =
+  "imul" ++ showSuffix size ++ " " ++ showVal val1 ++ ", " ++ showVal val2
+showInstr (IAdd size val1 val2) =
+  "add" ++ showSuffix size ++ " " ++ showVal val1 ++ ", " ++ showVal val2
+showInstr (IDiv size val) = "div" ++ showSuffix size ++ " " ++ showVal val
 showInstr (ICall string) = "call " ++ string
 showInstr ILeave = "leave"
 showInstr IRet = "ret"
