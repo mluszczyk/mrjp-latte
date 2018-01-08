@@ -13,6 +13,21 @@ The code is transformed to SSA first. The following optimisations are applied:
 - compile time calculation of constant expressions,
 - removal of trivial phi instructions.
 
+### Register allocation
+x86_64 backend stores commonly used values in processor registers.
+The implemented algorithm bases on SSA. Inference graph of SSA registers is
+built and coloured. Registers with the same colour are assigned to the same
+register or address in memory.
+
+Moreover, if a function argument is passed by register and register allocation
+algorithm decides to keep it in register (rather than on the stack), it will
+preserve its original register. Similarly, if a function argument is passed
+on stack and the algorithm decides to keep it in memory, the argument's colour
+is granted the argument's place in memory.
+
+Before function calls, all caller preserved registers are backed up on stack
+and restored after the called function returns.
+
 ## Design
 
 ### Library functions
