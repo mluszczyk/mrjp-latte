@@ -1,7 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wall -Werror #-}
--- ADT representation of x86_64 assembly, transformation of LLVM to assembly
--- and pretty printing.
+-- ADT representation of x86_64 assembly, transformation of LLVM to assembly,
+-- register allocation, graph colouring, pretty printing.
 
 module X86_64 (fromLLVM, showAsm, colourGraph) where
 
@@ -70,11 +70,12 @@ type InstrWriter = Writer [Instr]
 argPassingRegisters :: [Register]
 argPassingRegisters = [Rrdi, Rrsi, Rrdx, Rrcx, Rr8, Rr9]
 
--- x86_64
--- calleePreservedRegisters: r12, r13, r14, r15, rbx, rsp, rbp
--- rax, rbx, rcx, rdx, rsp, rbp, rsi, rdi, r8, r9, r10, r11, r12-r15
--- rax, rcx, rdx have special use in division - never alloc them
--- rdi, rsi, r8, r9, r10, r11 are best for allocation
+-- Registers that can be allocated.
+-- rax, rcx, rdx have special use in division - never alloc them.
+-- rsp and rbp have obvious special uses.
+-- Callee preserved registers: r12, r13, r14, r15, rbx, rsp, rbp.
+-- Callee preserved registers other than rsp and rbp are not used by the
+-- compiler and can be added below (but additional movs have to be added).
 allocatedRegisters :: [Register]
 allocatedRegisters = [Rrdi, Rrsi, Rr8, Rr9, Rr10, Rr11]
 
@@ -110,6 +111,8 @@ transFunc function@(LLVM.Function _ name args blocks) =
 
   where
     reg2Mem :: Reg2Mem
+    -- Determines the machine register or memory address in which the LLVM
+    -- register is stored. This does not change during execution of a function.
     reg2Mem = M.mapWithKey (\reg val -> castVal val (regType M.! reg))
                            (M.map (colourToMem M.!) regColours)
      where
@@ -126,7 +129,8 @@ transFunc function@(LLVM.Function _ name args blocks) =
            memArgs = filter highColour $ filter isMemArgument $ M.toList regColours
            highColour (_, num) = num >= length allocatedRegisters
            isMemArgument (LLVM.RArgument argName, _) =
-             maybe (error "unreachable") (>= length argPassingRegisters) (elemIndex (Just argName) (map snd args))
+             maybe (error "unreachable") (>= length argPassingRegisters)
+                   (elemIndex (Just argName) (map snd args))
            isMemArgument _ = False
 
        regArgs :: [Register]
@@ -175,7 +179,9 @@ transFunc function@(LLVM.Function _ name args blocks) =
                                 (align16 (8 * length distinctColours))))
                        (VRegister Rrsp)] ++
                 concat [ smartmov size passAddr (reg2Mem M.! LLVM.RArgument val)
-                | (passAddr, (type_, mVal)) <- zip (argPassingPositions 16 Rrbp) (drop (length argPassingRegisters) args)
+                | (passAddr, (type_, mVal)) <-
+                    zip (argPassingPositions 16 Rrbp)
+                        (drop (length argPassingRegisters) args)
                 , isJust mVal
                 , let size = typeToSize type_
                       Just val = mVal ]
