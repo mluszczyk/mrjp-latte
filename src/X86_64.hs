@@ -53,13 +53,14 @@ data Value = VRegister Register
            | VGlobal String
 data Register = Rrbp | Rrsp | Redi | Resi
                 | Reax | Redx | Recx | Rebx
-                | Rr8d | Rr9d
+                | Rr8d | Rr9d | Rr10d | Rr11d
                 | Rrax
                 | Rrdi | Rrsi
                 | Rrdx | Rrcx
-                | Rr8 | Rr9
+                | Rr8 | Rr9 | Rr10 | Rr11
                 | Rdil | Rsil | Rdl
-                | Rcl | Rr8b | Rr9b
+                | Rcl
+                | Rr8b | Rr9b | Rr10b | Rr11b
                 | Ral
                deriving Eq
 
@@ -77,7 +78,7 @@ argPassingRegisters = [Rrdi, Rrsi, Rrdx, Rrcx, Rr8, Rr9]
 -- rax, rcx, rdx have special use in division - never alloc them
 -- rdi, rsi, r8, r9, r10, r11 are best for allocation
 allocatedRegisters :: [Register]
-allocatedRegisters = [Rrdi, Rrsi, Rr8, Rr9]
+allocatedRegisters = [Rrdi, Rrsi, Rr8, Rr9, Rr10, Rr11]
 
 argPassingPositions :: Int -> Register -> [Value]
 argPassingPositions offset base =
@@ -448,6 +449,8 @@ showRegister reg = case reg of
   Recx -> "ecx"
   Rr8d -> "r8d"
   Rr9d -> "r9d"
+  Rr10d -> "r10d"
+  Rr11d -> "r11d"
   Rrdx -> "rdx"
   Rrax -> "rax"
   Rrdi -> "rdi"
@@ -455,12 +458,16 @@ showRegister reg = case reg of
   Rrcx -> "rcx"
   Rr8 -> "r8"
   Rr9 -> "r9"
+  Rr10 -> "r10"
+  Rr11 -> "r11"
   Rdil -> "dil"
   Rsil -> "sil"
   Rdl -> "dl"
   Rcl -> "cl"
   Rr9b -> "r9b"
   Rr8b -> "r8b"
+  Rr10b -> "r10b"
+  Rr11b -> "r11b"
   Ral -> "al"
   Rebx -> "ebx"
 
@@ -476,9 +483,11 @@ castRegister reg SLong = case reg of
   Rrsi -> Resi
   Rrdx -> Redx
   Rrcx -> Recx
+  Rrax -> Reax
   Rr8 -> Rr8d
   Rr9 -> Rr9d
-  Rrax -> Reax
+  Rr10 -> Rr10d
+  Rr11 -> Rr11d
   _ -> error "castRegister: unreachable"
 
 castRegister reg SByte = case reg of
@@ -486,9 +495,11 @@ castRegister reg SByte = case reg of
   Rrsi -> Rsil
   Rrdx -> Rdl
   Rrcx -> Rcl
+  Rrax -> Ral
   Rr8 -> Rr8b
   Rr9 -> Rr9b
-  Rrax -> Ral
+  Rr10 -> Rr10b
+  Rr11 -> Rr11b
   _ -> error "castRegister: unreachable"
 castRegister reg SQuad = case reg of
   Redi -> Rrdi
@@ -505,6 +516,8 @@ castRegister reg SQuad = case reg of
   Rcl -> Rrcx
   Rr8b -> Rr8
   Rr9b -> Rr9
+  Rr10b -> Rr10
+  Rr11b -> Rr11
   Ral -> Rrax
 
   Rrdi -> Rrdi
@@ -513,6 +526,8 @@ castRegister reg SQuad = case reg of
   Rrcx -> Rrcx
   Rr8 -> Rr8
   Rr9 -> Rr9
+  Rr10d -> Rr10
+  Rr11d -> Rr11
   Rrax -> Rrax
 
   _ -> error "castRegister _ SQuad: unreachable"
