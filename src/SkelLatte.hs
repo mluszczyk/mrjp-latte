@@ -60,7 +60,7 @@ transExpr x = case x of
   ELitFalse _ -> failure x
   EString _ string -> failure x
   EApp _ cident exprs -> failure x
-  EAt _ cident exprs -> failure x
+  EAt _ cident expr -> failure x
   ELength _ expr -> failure x
   Neg _ expr -> failure x
   Not _ expr -> failure x

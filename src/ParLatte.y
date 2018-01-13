@@ -262,7 +262,7 @@ Expr6 :: {
 | CIdent '(' ListExpr ')' {
   (fst $1, AbsLatte.EApp (fst $1)(snd $1)(snd $3)) 
 }
-| CIdent '[' ListExpr ']' {
+| CIdent '[' Expr ']' {
   (fst $1, AbsLatte.EAt (fst $1)(snd $1)(snd $3)) 
 }
 | '(' Expr ')' {

@@ -150,7 +150,7 @@ instance Print (Expr a) where
     ELitFalse _ -> prPrec i 6 (concatD [doc (showString "false")])
     EString _ str -> prPrec i 6 (concatD [prt 0 str])
     EApp _ cident exprs -> prPrec i 6 (concatD [prt 0 cident, doc (showString "("), prt 0 exprs, doc (showString ")")])
-    EAt _ cident exprs -> prPrec i 6 (concatD [prt 0 cident, doc (showString "["), prt 0 exprs, doc (showString "]")])
+    EAt _ cident expr -> prPrec i 6 (concatD [prt 0 cident, doc (showString "["), prt 0 expr, doc (showString "]")])
     ELength _ expr -> prPrec i 5 (concatD [prt 6 expr, doc (showString "."), doc (showString "length")])
     Neg _ expr -> prPrec i 5 (concatD [doc (showString "-"), prt 6 expr])
     Not _ expr -> prPrec i 5 (concatD [doc (showString "!"), prt 6 expr])
