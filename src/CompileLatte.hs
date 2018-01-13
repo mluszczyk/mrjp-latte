@@ -9,7 +9,6 @@ import qualified AbsLatte
 import qualified CompilerErr as CE
 import qualified LatteCommon
 import Control.Monad (foldM, when)
-import Data.Tuple (swap)
 import Data.Maybe (mapMaybe)
 
 import qualified LLVM
@@ -20,19 +19,24 @@ import CompilerState
 llvmHeader :: [String]
 llvmHeader = [ "target triple = \"x86_64-apple-macosx10.13.0\"" ]
 
-builtins :: [(AbsLatte.CIdent, LLVM.FunctionType)]
-builtins = [ (AbsLatte.CIdent "printInt", LLVM.FunctionType [LLVM.Ti32] LLVM.Tvoid)
-           , (AbsLatte.CIdent "printString", LLVM.FunctionType [LLVM.Ti8Ptr] LLVM.Tvoid)
-           , (AbsLatte.CIdent "readInt", LLVM.FunctionType [] LLVM.Ti32)
-           , (AbsLatte.CIdent "readString", LLVM.FunctionType [] LLVM.Ti8Ptr)
-           , (AbsLatte.CIdent "error", LLVM.FunctionType [] LLVM.Tvoid)
+builtins :: [(AbsLatte.CIdent, LatteCommon.FunctionType)]
+builtins = [ (AbsLatte.CIdent "printInt"
+             , LatteCommon.FunctionType [LatteCommon.Int] LatteCommon.Void)
+           , (AbsLatte.CIdent "printString"
+             , LatteCommon.FunctionType [LatteCommon.String] LatteCommon.Void)
+           , (AbsLatte.CIdent "readInt"
+             , LatteCommon.FunctionType [] LatteCommon.Int)
+           , (AbsLatte.CIdent "readString"
+             , LatteCommon.FunctionType [] LatteCommon.String)
+           , (AbsLatte.CIdent "error"
+             , LatteCommon.FunctionType [] LatteCommon.Void )
            ]
 
 hiddenBuiltins :: [LLVM.Declare]
 hiddenBuiltins =
-           [ LLVM.Declare concatName $ LLVM.FunctionType [LLVM.Ti8Ptr, LLVM.Ti8Ptr] LLVM.Ti8Ptr
-           , LLVM.Declare streqName $ LLVM.FunctionType [LLVM.Ti8Ptr, LLVM.Ti8Ptr] LLVM.Ti1
-           , LLVM.Declare strneName $ LLVM.FunctionType [LLVM.Ti8Ptr, LLVM.Ti8Ptr] LLVM.Ti1
+           [ LLVM.Declare concatName $ LLVM.FunctionType [LLVM.Ptr LLVM.Ti8, LLVM.Ptr LLVM.Ti8] (LLVM.Ptr LLVM.Ti8)
+           , LLVM.Declare streqName $ LLVM.FunctionType [LLVM.Ptr LLVM.Ti8, LLVM.Ptr LLVM.Ti8] LLVM.Ti1
+           , LLVM.Declare strneName $ LLVM.FunctionType [LLVM.Ptr LLVM.Ti8, LLVM.Ptr LLVM.Ti8] LLVM.Ti1
            ]
 
 concatName :: String
@@ -47,8 +51,8 @@ emptyStringConst = LLVM.Constant 1 "empty_string" ""
 
 mainFunctionName :: AbsLatte.CIdent
 mainFunctionName = AbsLatte.CIdent "main"
-mainFunctionType :: LLVM.FunctionType
-mainFunctionType = LLVM.FunctionType [] LLVM.Ti32
+mainFunctionType :: LatteCommon.FunctionType
+mainFunctionType = LatteCommon.FunctionType [] LatteCommon.Int
 
 type Position = Maybe (Int, Int)
 
@@ -91,17 +95,17 @@ collectSignatures topDefs = Signatures $ M.fromList pairs
             map getSignaturePair topDefs
     getSignaturePair (AbsLatte.FnDef _ retType ident args _) =
       (ident,
-       LLVM.FunctionType
+       LatteCommon.FunctionType
        (map (\ (AbsLatte.Arg _ type_ _) -> compileType type_) args)
        (compileType retType))
 
-compileType :: AbsLatte.Type Position -> LLVM.Type
-compileType (AbsLatte.Int _) = LLVM.Ti32
-compileType (AbsLatte.Void _) = LLVM.Tvoid
-compileType (AbsLatte.Bool _) = LLVM.Ti1
-compileType (AbsLatte.Str _) = LLVM.Ti8Ptr
+compileType :: AbsLatte.Type Position -> LatteCommon.Type
+compileType (AbsLatte.Int _) = LatteCommon.Int
+compileType (AbsLatte.Void _) = LatteCommon.Void
+compileType (AbsLatte.Bool _) = LatteCommon.Boolean
+compileType (AbsLatte.Str _) = LatteCommon.String
 compileType AbsLatte.Fun {} = error "unreachable"
-compileType (AbsLatte.Array _ _) = error "unimplemented"
+compileType (AbsLatte.Array _ type_) = LatteCommon.Array (compileType type_)
 
 -- must be evaluated after checking that main function exists
 getMainPosition :: [AbsLatte.TopDef Position] -> Position
@@ -140,7 +144,10 @@ latteToLLVM (AbsLatte.Program _ topDefs) =
     go signatures (functions, constants, constCounter0) topDef =
            do (newFunc, newConstants, constCounter1) <- compileFunc signatures topDef constCounter0
               return (functions ++ [newFunc], constants ++ newConstants, constCounter1)
-    builtinToLLVM (ident, type_) = LLVM.Declare (compileFuncIdent ident) type_
+    builtinToLLVM (ident, type_) = LLVM.Declare (compileFuncIdent ident) (funcTypeToLLVM type_)
+      where
+        funcTypeToLLVM (LatteCommon.FunctionType argTypes retType) =
+          LLVM.FunctionType (map typeToLLVM argTypes) (typeToLLVM retType)
 
 compileLatteToX86_64 :: AbsLatte.Program Position -> CompilerErrorM String
 compileLatteToX86_64 program = do
@@ -152,22 +159,25 @@ compileFunc :: Signatures -> AbsLatte.TopDef Position -> ConstCounter
 compileFunc signatures (AbsLatte.FnDef fPosition type_ ident args (AbsLatte.Block _ stmts)) constCounter0 =
    do
       mapM_ (\ (num, AbsLatte.Arg position argType _) ->
-            checkNotVoid argType CE.CEVoidFunctionArgument { CE.cePosition = compilePosition position
-                                                           , CE.ceArgumentNumber = num })
+            checkNotVoid (compileType argType)
+                         CE.CEVoidFunctionArgument
+                         { CE.cePosition = compilePosition position
+                         , CE.ceArgumentNumber = num })
             (zip [(1 :: Int)..] args)
       (_, instrs, globals, _, _, nextRegister, constCounter1) <-
         runStatementM signatures (compileType type_) (LLVM.Label 0)
                       initNewScopeVars initValueMap
                       initNextRegister constCounter0 makeBody
       let blocks = TransLLVM.instrsToBlocks instrs
-          rawFunc = LLVM.Function (compileType type_) (compileFuncIdent ident) llvmArgs blocks
+          rawFunc = LLVM.Function (typeToLLVM (compileType type_))
+                                  (compileFuncIdent ident) llvmArgs blocks
       (func, _) <- optimise rawFunc nextRegister
       when (TransLLVM.hasUnreachableInstruction func) $
         raise $ CE.CEMissingReturn ident (compilePosition fPosition)
       return (func, globals, constCounter1)
    where
      llvmArgs :: [(LLVM.Type, Maybe String)]
-     llvmArgs = map (\ (AbsLatte.Arg _ argType argIdent) -> (compileType argType, Just (compileVariableIdent argIdent))) args
+     llvmArgs = map (\ (AbsLatte.Arg _ argType argIdent) -> (typeToLLVM (compileType argType), Just (compileVariableIdent argIdent))) args
 
      makeBody :: StatementM ()
      makeBody =
@@ -180,14 +190,15 @@ compileFunc signatures (AbsLatte.FnDef fPosition type_ ident args (AbsLatte.Bloc
      saveArgument :: AbsLatte.Arg Position -> StatementM ()
      saveArgument (AbsLatte.Arg pos argType argIdent) =
        do ptr <- getNextRegisterE
-          let llvmType = compileType argType
+          let latteType = compileType argType
+              llvmType = typeToLLVM latteType
           emitInstruction $ LLVM.IAlloca llvmType ptr
           emitInstruction $ LLVM.IStore llvmType
               (LLVM.VRegister $ LLVM.RArgument (compileVariableIdent argIdent))
               llvmType ptr
-          setVariableM (compilePosition pos) argIdent llvmType ptr
+          setVariableM (compilePosition pos) argIdent latteType ptr
 
-     closeFunc | lType == LLVM.Tvoid = LLVM.IRetVoid
+     closeFunc | lType == LatteCommon.Void = LLVM.IRetVoid
                | otherwise = LLVM.IUnreachable
      lType = compileType type_
 
@@ -203,11 +214,20 @@ compileFunc signatures (AbsLatte.FnDef fPosition type_ ident args (AbsLatte.Bloc
        let func5 = TransLLVM.removeUnusedAssignments func4
        return func5
 
-defaultValue :: LLVM.Type -> LLVM.Value
-defaultValue LLVM.Ti1  = LLVM.VFalse
-defaultValue LLVM.Ti32 = LLVM.VConst 0
-defaultValue LLVM.Tvoid = error "unreachable"
-defaultValue LLVM.Ti8Ptr = LLVM.VGetElementPtr 1 "empty_string"
+defaultValue :: LatteCommon.Type -> LLVM.Value
+defaultValue LatteCommon.Boolean  = LLVM.VFalse
+defaultValue LatteCommon.Int = LLVM.VConst 0
+defaultValue LatteCommon.Void = error "unreachable"
+defaultValue LatteCommon.String = LLVM.VGetElementPtr 1 "empty_string"
+defaultValue (LatteCommon.Array _) = LLVM.VNull
+
+typeToLLVM :: LatteCommon.Type -> LLVM.Type
+typeToLLVM type_ = case type_ of
+  LatteCommon.Void -> LLVM.Tvoid
+  LatteCommon.Int -> LLVM.Ti32
+  LatteCommon.Boolean -> LLVM.Ti1
+  LatteCommon.String -> LLVM.Ptr LLVM.Ti8
+  LatteCommon.Array innerType -> LLVM.Ptr (typeToLLVM innerType)
 
 compileFlowBlock :: AbsLatte.Stmt Position -> LLVM.Label -> ExprM ()
 compileFlowBlock stmt nextBlock =
@@ -216,18 +236,19 @@ compileFlowBlock stmt nextBlock =
 
 compileAssign :: Position
                 -> AbsLatte.Expr Position
-                -> LLVM.Type
+                -> LatteCommon.Type
                 -> LLVM.Register
                 -> ExprM ()
 compileAssign position expr ptrType ptr =
   do (value, type_) <- compileExpr expr
      checkType position ptrType type_ "assignment"
-     emitInstruction $ LLVM.IStore type_ value type_ ptr
+     emitInstruction $ LLVM.IStore (typeToLLVM type_) value
+                                   (typeToLLVM type_) ptr
 
 compileStmt :: AbsLatte.Stmt Position -> StatementM ()
 compileStmt (AbsLatte.VRet position) =
   do retType <- readRetType
-     checkType position retType LLVM.Tvoid "return statement"
+     checkType position retType LatteCommon.Void "return statement"
      emitInstruction LLVM.IRetVoid
 
 compileStmt (AbsLatte.Incr pos ident) = compileIncrDecrHelper pos ident LLVM.OAdd
@@ -241,11 +262,11 @@ compileStmt (AbsLatte.SExp _ expr) =
 
 compileStmt (AbsLatte.Ret position expr)=
   do expectedRetType <- readRetType
-     when (expectedRetType == LLVM.Tvoid) $
+     when (expectedRetType == LatteCommon.Void) $
         raise $ CE.CEExprReturnInVoid (compilePosition position)
      (value, type_) <- exprInStatement (compileExpr expr)
      checkType position expectedRetType type_ "return"
-     emitInstruction $ LLVM.IRet type_ value
+     emitInstruction $ LLVM.IRet (typeToLLVM type_) value
 
 compileStmt (AbsLatte.Ass pos ident expr) =
   do valueMap <- readValueMapS
@@ -253,16 +274,17 @@ compileStmt (AbsLatte.Ass pos ident expr) =
      exprInStatement $ compileAssign pos expr type_ ptr
 
 compileStmt (AbsLatte.Decl position type_ decls) =
-   do checkNotVoid type_ (CE.CEVoidDeclaration (compilePosition position))
+   do checkNotVoid (compileType type_) (CE.CEVoidDeclaration (compilePosition position))
       ptrs <- exprInStatement $ mapM go decls
       mapM_ (\ (decl, ptr) -> setVariableM
                   (compilePosition (getDeclPos decl))
                   (getIdent decl)
-                   llvmType ptr)
+                  latteType ptr)
               (zip decls ptrs)
 
    where
-      llvmType = compileType type_
+      latteType = compileType type_
+      llvmType = typeToLLVM latteType
 
       getIdent (AbsLatte.Init _ ident _) = ident
       getIdent (AbsLatte.NoInit _ ident) = ident
@@ -271,9 +293,9 @@ compileStmt (AbsLatte.Decl position type_ decls) =
       getDeclPos (AbsLatte.NoInit pos _) = pos
 
       storeValue (AbsLatte.Init itemPos _ expr) ptr =
-        compileAssign itemPos expr llvmType ptr
+        compileAssign itemPos expr latteType ptr
       storeValue (AbsLatte.NoInit _ _) ptr =
-        emitInstruction $ LLVM.IStore llvmType (defaultValue llvmType) llvmType ptr
+        emitInstruction $ LLVM.IStore llvmType (defaultValue latteType) llvmType ptr
 
       go declItem =
            do ptr <- getNextRegisterE
@@ -286,7 +308,7 @@ compileStmt (AbsLatte.BStmt _ (AbsLatte.Block _ stmts)) =
 
 compileStmt (AbsLatte.Cond position expr stmt1) =
   do (cond, type_) <- exprInStatement $ compileExpr expr
-     checkType position LLVM.Ti1 type_ "if condition"
+     checkType position LatteCommon.Boolean type_ "if condition"
      ifTrueBlock <- getNextLabelE
      contBlock <- getNextLabelE
      emitInstruction $ LLVM.IBrCond LLVM.Ti1 cond ifTrueBlock contBlock
@@ -296,7 +318,7 @@ compileStmt (AbsLatte.Cond position expr stmt1) =
 
 compileStmt (AbsLatte.CondElse pos expr stmt1 stmt2) =
   do (cond, type_) <- exprInStatement $ compileExpr expr
-     checkType pos LLVM.Ti1 type_ "if-else condition"
+     checkType pos LatteCommon.Boolean type_ "if-else condition"
      ifTrueBlock <- getNextLabelE
      ifElseBlock <- getNextLabelE
      contBlock <- getNextLabelE
@@ -316,7 +338,7 @@ compileStmt (AbsLatte.While position expr stmt) =
      exprInStatement $ compileFlowBlock stmt condBlock
      emitInstruction $ LLVM.ILabel condBlock
      (cond, type_) <- exprInStatement $ compileExpr expr
-     checkType position LLVM.Ti1 type_ "while loop condition"
+     checkType position LatteCommon.Boolean type_ "while loop condition"
      emitInstruction $ LLVM.IBrCond LLVM.Ti1 cond bodyBlock contBlock
      emitInstruction $ LLVM.ILabel contBlock
 
@@ -327,25 +349,25 @@ compileIncrDecrHelper :: Position -> AbsLatte.CIdent -> LLVM.ArithmOp -> Stateme
 compileIncrDecrHelper pos ident arithmOp =
   do valueMap <- readValueMapS
      (type_, ptr) <- lookupVariable ident valueMap (compilePosition pos)
-     checkType pos LLVM.Ti32 type_ "incrementation"
+     checkType pos LatteCommon.Int type_ "incrementation"
      operand <- getNextRegisterE
      result <- getNextRegisterE
      emitInstruction $ LLVM.ILoad LLVM.Ti32 LLVM.Ti32 ptr operand
      emitInstruction $ LLVM.IArithm LLVM.Ti32 (LLVM.VRegister operand) (LLVM.VConst 1) arithmOp result
      emitInstruction $ LLVM.IStore LLVM.Ti32 (LLVM.VRegister result) LLVM.Ti32 ptr
 
-compileExpr :: AbsLatte.Expr Position -> ExprM (LLVM.Value, LLVM.Type)
+compileExpr :: AbsLatte.Expr Position -> ExprM (LLVM.Value, LatteCommon.Type)
 compileExpr (AbsLatte.EVar pos ident) =
   do valueMap <- readValueMap
      (type_, ptr) <- lookupVariable ident valueMap (compilePosition pos)
      reg <- getNextRegisterE
-     emitInstruction $ LLVM.ILoad type_ type_ ptr reg
+     emitInstruction $ LLVM.ILoad (typeToLLVM type_) (typeToLLVM type_) ptr reg
      return (LLVM.VRegister reg, type_)
 
 compileExpr (AbsLatte.EApp pos ident args) =
   do compiledArgs <- mapM compileExpr args
      signatures <- readSignatures
-     (LLVM.FunctionType expectedArgTypes retType) <- getType ident signatures (compilePosition pos)
+     (LatteCommon.FunctionType expectedArgTypes retType) <- getType ident signatures (compilePosition pos)
      let argTypes = map snd compiledArgs
      mapM_ (\ (num, actType, expType) ->
               (checkType pos expType actType ("argument " ++ show num ++ " in function call")))
@@ -353,12 +375,13 @@ compileExpr (AbsLatte.EApp pos ident args) =
      when (length argTypes /= length expectedArgTypes) (
         raise $ CE.CEWrongNumberOfFunctionArguments
           (compilePosition pos) (length expectedArgTypes) (length argTypes) ident)
-     if retType == LLVM.Tvoid then do
-       emitInstruction $ LLVM.ICall retType (compileFuncIdent ident) (map swap compiledArgs) Nothing
+     let llvmArgs = map (\(val, latteType) -> (typeToLLVM latteType, val)) compiledArgs
+     if retType == LatteCommon.Void then do
+       emitInstruction $ LLVM.ICall (typeToLLVM retType) (compileFuncIdent ident) llvmArgs Nothing
        return (LLVM.VConst 0, retType)
      else do
        register <- getNextRegisterE
-       emitInstruction $ LLVM.ICall retType (compileFuncIdent ident) (map swap compiledArgs) (Just register)
+       emitInstruction $ LLVM.ICall (typeToLLVM retType) (compileFuncIdent ident) llvmArgs (Just register)
        return (LLVM.VRegister register, retType)
 
 compileExpr (AbsLatte.ELitInt pos int) =
@@ -366,18 +389,18 @@ compileExpr (AbsLatte.ELitInt pos int) =
     when (int < lowerBound || upperBound < int) $
       raise $ CE.CEIntLiteralOutOfBounds (compilePosition pos)
        int lowerBound upperBound
-    return (LLVM.VConst int, LLVM.Ti32)
+    return (LLVM.VConst int, LatteCommon.Int)
 
   where
     lowerBound = -2147483648
     upperBound = 2147483647
-compileExpr (AbsLatte.ELitTrue _) = return (LLVM.VTrue, LLVM.Ti1)
-compileExpr (AbsLatte.ELitFalse _) = return (LLVM.VFalse, LLVM.Ti1)
+compileExpr (AbsLatte.ELitTrue _) = return (LLVM.VTrue, LatteCommon.Boolean)
+compileExpr (AbsLatte.ELitFalse _) = return (LLVM.VFalse, LatteCommon.Boolean)
 
 compileExpr (AbsLatte.EString _ string) =
   do constName <- getNextConstE
      emitGlobal $ LLVM.Constant (length llvmString + 1) constName llvmString
-     return (LLVM.VGetElementPtr (length llvmString + 1) constName, LLVM.Ti8Ptr)
+     return (LLVM.VGetElementPtr (length llvmString + 1) constName, LatteCommon.String)
 
   where
     llvmString = unescape (unquot string)
@@ -399,17 +422,17 @@ compileExpr (AbsLatte.EString _ string) =
 
 compileExpr (AbsLatte.Neg pos expr) =
   do (value, type_) <- compileExpr expr
-     checkType pos LLVM.Ti32 type_ "negation"
+     checkType pos LatteCommon.Int type_ "negation"
      res <- getNextRegisterE
      emitInstruction $ LLVM.IArithm LLVM.Ti32 (LLVM.VConst 0) value LLVM.OSub res
-     return (LLVM.VRegister res, LLVM.Ti32)
+     return (LLVM.VRegister res, LatteCommon.Int)
 
 compileExpr (AbsLatte.Not pos expr) =
   do (value, type_) <- compileExpr expr
-     checkType pos LLVM.Ti1 type_ "boolean not"
+     checkType pos LatteCommon.Boolean type_ "boolean not"
      res <- getNextRegisterE
      emitInstruction $ LLVM.IIcmp LLVM.RelOpEQ LLVM.Ti1 LLVM.VFalse value res
-     return (LLVM.VRegister res, LLVM.Ti1)
+     return (LLVM.VRegister res, LatteCommon.Boolean)
 
 compileExpr (AbsLatte.EAnd pos expr1 expr2) =
   compileBooleanOpHelper pos LLVM.VFalse expr1 expr2
@@ -430,34 +453,34 @@ compileExpr (AbsLatte.ELength _ _) =
 compileExpr AbsLatte.ENew {} =
   error "unimplemented ENew"
 
-getOpInst :: LLVM.Type -> LatteCommon.Operation -> LLVM.Type
-             -> Maybe (LLVM.Type, LLVM.Value -> LLVM.Value -> LLVM.Register -> LLVM.Instr)
+getOpInst :: LatteCommon.Type -> LatteCommon.Operation -> LatteCommon.Type
+             -> Maybe (LatteCommon.Type, LLVM.Value -> LLVM.Value -> LLVM.Register -> LLVM.Instr)
 getOpInst type1 op type2 = case (type1, op, type2) of
-  ( LLVM.Ti32, LatteCommon.Add, LLVM.Ti32 ) -> arithm
-  ( LLVM.Ti32, LatteCommon.Sub, LLVM.Ti32 ) -> arithm
-  ( LLVM.Ti32, LatteCommon.Mul, LLVM.Ti32 ) -> arithm
-  ( LLVM.Ti32, LatteCommon.Div, LLVM.Ti32 ) -> arithm
-  ( LLVM.Ti32, LatteCommon.Mod, LLVM.Ti32 ) -> arithm
+  ( LatteCommon.Int, LatteCommon.Add, LatteCommon.Int ) -> arithm
+  ( LatteCommon.Int, LatteCommon.Sub, LatteCommon.Int ) -> arithm
+  ( LatteCommon.Int, LatteCommon.Mul, LatteCommon.Int ) -> arithm
+  ( LatteCommon.Int, LatteCommon.Div, LatteCommon.Int ) -> arithm
+  ( LatteCommon.Int, LatteCommon.Mod, LatteCommon.Int ) -> arithm
 
-  ( LLVM.Ti8Ptr, LatteCommon.Add, LLVM.Ti8Ptr ) -> concat_
+  ( LatteCommon.String, LatteCommon.Add, LatteCommon.String ) -> concat_
 
-  ( LLVM.Ti32, LatteCommon.LessThan, LLVM.Ti32 ) -> rel
-  ( LLVM.Ti32, LatteCommon.GreaterThan, LLVM.Ti32 ) -> rel
-  ( LLVM.Ti32, LatteCommon.LessEqual, LLVM.Ti32 ) -> rel
-  ( LLVM.Ti32, LatteCommon.GreaterEqual, LLVM.Ti32 ) -> rel
-  ( LLVM.Ti32, LatteCommon.Equal, LLVM.Ti32 ) -> rel
-  ( LLVM.Ti32, LatteCommon.NotEqual, LLVM.Ti32 ) -> rel
+  ( LatteCommon.Int, LatteCommon.LessThan, LatteCommon.Int ) -> rel
+  ( LatteCommon.Int, LatteCommon.GreaterThan, LatteCommon.Int ) -> rel
+  ( LatteCommon.Int, LatteCommon.LessEqual, LatteCommon.Int ) -> rel
+  ( LatteCommon.Int, LatteCommon.GreaterEqual, LatteCommon.Int ) -> rel
+  ( LatteCommon.Int, LatteCommon.Equal, LatteCommon.Int ) -> rel
+  ( LatteCommon.Int, LatteCommon.NotEqual, LatteCommon.Int ) -> rel
 
-  ( LLVM.Ti1, LatteCommon.Equal, LLVM.Ti1 ) -> rel
-  ( LLVM.Ti1, LatteCommon.NotEqual, LLVM.Ti1 ) -> rel
+  ( LatteCommon.Boolean, LatteCommon.Equal, LatteCommon.Boolean ) -> rel
+  ( LatteCommon.Boolean, LatteCommon.NotEqual, LatteCommon.Boolean ) -> rel
 
-  ( LLVM.Ti8Ptr, LatteCommon.Equal, LLVM.Ti8Ptr ) -> stringRel
-  ( LLVM.Ti8Ptr, LatteCommon.NotEqual, LLVM.Ti8Ptr ) -> stringRel
+  ( LatteCommon.String, LatteCommon.Equal, LatteCommon.String ) -> stringRel
+  ( LatteCommon.String, LatteCommon.NotEqual, LatteCommon.String ) -> stringRel
 
   _ -> Nothing
 
   where
-    arithm = Just ( LLVM.Ti32
+    arithm = Just ( LatteCommon.Int
              , \ v1 v2 reg -> LLVM.IArithm LLVM.Ti32 v1 v2 arithmOp reg )
     arithmOp = case op of LatteCommon.Add -> LLVM.OAdd
                           LatteCommon.Sub -> LLVM.OSub
@@ -466,12 +489,12 @@ getOpInst type1 op type2 = case (type1, op, type2) of
                           LatteCommon.Mod -> LLVM.OSRem
                           _ -> error "unreachable"
 
-    concat_ = Just ( LLVM.Ti8Ptr
-              , \ v1 v2 reg -> LLVM.ICall LLVM.Ti8Ptr concatName
-                           [(LLVM.Ti8Ptr, v1), (LLVM.Ti8Ptr, v2)]
+    concat_ = Just ( LatteCommon.String
+              , \ v1 v2 reg -> LLVM.ICall (LLVM.Ptr LLVM.Ti8) concatName
+                           [(LLVM.Ptr LLVM.Ti8, v1), (LLVM.Ptr LLVM.Ti8, v2)]
                            (Just reg) )
 
-    rel = Just ( LLVM.Ti1, LLVM.IIcmp relOp type1 )
+    rel = Just ( LatteCommon.Boolean, LLVM.IIcmp relOp (typeToLLVM type1) )
     relOp = case op of LatteCommon.LessThan -> LLVM.RelOpSLT
                        LatteCommon.GreaterThan -> LLVM.RelOpSGT
                        LatteCommon.LessEqual -> LLVM.RelOpSLE
@@ -480,9 +503,9 @@ getOpInst type1 op type2 = case (type1, op, type2) of
                        LatteCommon.NotEqual -> LLVM.RelOpNE
                        _ -> error "unreachable"
 
-    stringRel = Just ( LLVM.Ti1
+    stringRel = Just ( LatteCommon.Boolean
                 , \ v1 v2 reg -> LLVM.ICall LLVM.Ti1 strPred
-                    [(LLVM.Ti8Ptr, v1), (LLVM.Ti8Ptr, v2)]
+                    [(LLVM.Ptr LLVM.Ti8, v1), (LLVM.Ptr LLVM.Ti8, v2)]
                     (Just reg) )
     strPred = case op of LatteCommon.Equal -> streqName
                          LatteCommon.NotEqual -> strneName
@@ -499,7 +522,8 @@ compileRelOp (AbsLatte.NE _) = LatteCommon.NotEqual
 compileArithm :: Position
                 -> AbsLatte.Expr Position
                 -> LatteCommon.Operation
-                -> AbsLatte.Expr Position -> ExprM (LLVM.Value, LLVM.Type)
+                -> AbsLatte.Expr Position
+                -> ExprM (LLVM.Value, LatteCommon.Type)
 compileArithm position exp1 op exp2 =
   do (val1, type1) <- compileExpr exp1
      (val2, type2) <- compileExpr exp2
@@ -518,10 +542,10 @@ compileBooleanOpHelper :: Position
                           -> LLVM.Value
                           -> AbsLatte.Expr Position
                           -> AbsLatte.Expr Position
-                          -> ExprM (LLVM.Value, LLVM.Type)
+                          -> ExprM (LLVM.Value, LatteCommon.Type)
 compileBooleanOpHelper position skipValue expr1 expr2 =
   do (val1, type1) <- compileExpr expr1
-     checkType position LLVM.Ti1 type1 "first operand in && expression"
+     checkType position LatteCommon.Boolean type1 "first operand in && expression"
      expr2Block <- getNextLabelE
      andEndBlock <- getNextLabelE
      expr1Block <- getCurrentBlock
@@ -529,26 +553,26 @@ compileBooleanOpHelper position skipValue expr1 expr2 =
 
      emitInstruction $ LLVM.ILabel expr2Block
      (val2, type2) <- compileExpr expr2
-     checkType position LLVM.Ti1 type2 "second operand in && expression"
+     checkType position LatteCommon.Boolean type2 "second operand in && expression"
      emitInstruction $ LLVM.IBr andEndBlock
      expr2Block' <- getCurrentBlock
 
      emitInstruction $ LLVM.ILabel andEndBlock
      res <- getNextRegisterE
      emitInstruction $ LLVM.IPhi LLVM.Ti1 [(skipValue, expr1Block), (val2, expr2Block')] res
-     return (LLVM.VRegister res, LLVM.Ti1)
+     return (LLVM.VRegister res, LatteCommon.Boolean)
   where
     jumpOrder f a b | skipValue == LLVM.VFalse = f a b
                     | skipValue == LLVM.VTrue = f b a
                     | otherwise = error "unreachable"
 
-checkType :: (Raiser m) => Position -> LLVM.Type -> LLVM.Type -> String -> m ()
+checkType :: (Raiser m) => Position -> LatteCommon.Type -> LatteCommon.Type -> String -> m ()
 checkType pos expType actType description | expType == actType = return ()
-                                      | otherwise = raise $
+                                          | otherwise = raise $
                                           CE.CETypeError (compilePosition pos) expType actType description
 
-checkNotVoid :: (Raiser m) => AbsLatte.Type Position -> CE.CompilerError -> m ()
-checkNotVoid (AbsLatte.Void _) ce = raise ce
+checkNotVoid :: (Raiser m) => LatteCommon.Type -> CE.CompilerError -> m ()
+checkNotVoid LatteCommon.Void ce = raise ce
 checkNotVoid _ _ = return ()
 
 compileAddOperator :: AbsLatte.AddOp a -> LatteCommon.Operation

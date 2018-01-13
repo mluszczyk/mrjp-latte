@@ -5,11 +5,10 @@
 module CompilerErr where
 
 import qualified AbsLatte
-import qualified LLVM
 
 import qualified LatteCommon
 
-type Type = LLVM.Type
+type Type = LatteCommon.Type
 type VariableIdent = AbsLatte.CIdent
 type FunctionIdent = AbsLatte.CIdent
 
@@ -111,10 +110,11 @@ showFunctionIdent :: FunctionIdent -> String
 showFunctionIdent (AbsLatte.CIdent string) = string
 
 showType :: Type -> String
-showType LLVM.Ti1 = "boolean"
-showType LLVM.Ti32 = "int"
-showType LLVM.Ti8Ptr = "string"
-showType LLVM.Tvoid = "void"
+showType LatteCommon.String = "string"
+showType LatteCommon.Int = "int"
+showType LatteCommon.Void = "void"
+showType LatteCommon.Boolean = "boolean"
+showType (LatteCommon.Array type_) = showType type_ ++ "[]"
 
 showOperator :: LatteCommon.Operation -> String
 showOperator LatteCommon.Mul = "*"

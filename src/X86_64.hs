@@ -367,6 +367,7 @@ transVal (LLVM.VRegister reg) reg2Mem = return $ reg2Mem M.! reg
 transVal LLVM.VTrue _ = return $ VConst 1
 transVal LLVM.VFalse _ = return $ VConst 0
 transVal LLVM.VUndef _ = error "transVal LLVM.VUndef: unreachable"
+transVal LLVM.VNull _ = return $ VConst 0
 transVal (LLVM.VGetElementPtr _ str) _ = do
   tell [ILeaq (VGlobal str) (VRegister Rrax)]
   return $ VRegister Rrax
@@ -471,8 +472,9 @@ showRegister reg = case reg of
 
 typeToSize :: LLVM.Type -> Size
 typeToSize LLVM.Ti32 = SLong
-typeToSize LLVM.Ti8Ptr = SQuad
+typeToSize (LLVM.Ptr _) = SQuad
 typeToSize LLVM.Ti1 = SByte
+typeToSize LLVM.Ti8 = SByte
 typeToSize _ = error "typeToSize: unreachable"
 
 castRegister :: Register -> Size -> Register

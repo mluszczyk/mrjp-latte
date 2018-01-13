@@ -12,13 +12,14 @@ import Control.Monad.State (StateT, get, put, runStateT)
 import Control.Monad.Writer
 import qualified CompilerErr
 import qualified AbsLatte
+import qualified LatteCommon
 
 
 type VariableIdent = AbsLatte.CIdent
 type FunctionIdent = AbsLatte.CIdent
 
 data StatementEnv = StatementEnv { seSignatures :: Signatures
-                                    , seRetType :: LLVM.Type }
+                                    , seRetType :: LatteCommon.Type }
 data StatementState = StatementState { ssNextRegister :: NextRegister
                                      , ssConstCounter :: ConstCounter
                                      , ssValueMap :: ValueMap
@@ -31,7 +32,7 @@ type StatementM = ReaderT StatementEnv (StateT StatementState (WriterT Statement
 
 data ExprEnv  = ExprEnv { erSignatures :: Signatures
                         , erValueMap :: ValueMap
-                        , erRetType :: LLVM.Type }
+                        , erRetType :: LatteCommon.Type }
 data ExprState = ExprState { esNextRegister :: NextRegister
                            , esConstCounter :: ConstCounter
                            , esInstructions :: [LLVM.Instr]
@@ -69,7 +70,7 @@ instance (CompilerWriter m) => CompilerWriter (StateT a m) where
 
 class (Monad m) => SignatureReader m where
   readSignatures :: m Signatures
-  readRetType :: m LLVM.Type
+  readRetType :: m LatteCommon.Type
 
 instance (Monad m) => SignatureReader (ReaderT ExprEnv m) where
   readSignatures = do
@@ -171,11 +172,12 @@ instance Monoid ExprWr where
      = ExprWr { ewGlobals = globals1 ++ globals2 }
   mempty = ExprWr { ewGlobals = [] }
 
-newtype ValueMap = ValueMap (M.Map VariableIdent (LLVM.Type, LLVM.Register))
-newtype Signatures = Signatures (M.Map FunctionIdent LLVM.FunctionType)
+newtype ValueMap = ValueMap (M.Map VariableIdent (LatteCommon.Type, LLVM.Register))
+newtype Signatures = Signatures (M.Map FunctionIdent LatteCommon.FunctionType)
 newtype NextRegister = NextRegister Int
 
-getType :: (Raiser m) => FunctionIdent -> Signatures -> CompilerErr.Position -> m LLVM.FunctionType
+getType :: (Raiser m) => FunctionIdent -> Signatures -> CompilerErr.Position
+           -> m LatteCommon.FunctionType
 getType ident signatures position =
   maybe (raise
     CompilerErr.CEUndefinedFunction { CompilerErr.ceFunctionIdent = ident
@@ -183,7 +185,7 @@ getType ident signatures position =
   return
   (getMaybeType ident signatures)
 
-getMaybeType :: FunctionIdent -> Signatures -> Maybe LLVM.FunctionType
+getMaybeType :: FunctionIdent -> Signatures -> Maybe LatteCommon.FunctionType
 getMaybeType string (Signatures signatures) =
   M.lookup string signatures
 
@@ -200,7 +202,7 @@ getNextConst :: ConstCounter -> (String, ConstCounter)
 getNextConst (ConstCounter num) = ("string" ++ show num, ConstCounter (num + 1))
 
 runStatementM :: Signatures
-                 -> LLVM.Type
+                 -> LatteCommon.Type
                  -> LLVM.Label
                  -> [VariableIdent]
                  -> ValueMap
@@ -293,18 +295,21 @@ statementInExpr statementM =
 initNextRegister :: NextRegister
 initNextRegister = NextRegister 0
 
-setVariable :: VariableIdent -> LLVM.Type -> LLVM.Register -> ValueMap -> ValueMap
+setVariable :: VariableIdent -> LatteCommon.Type -> LLVM.Register -> ValueMap
+               -> ValueMap
 setVariable name type_ value (ValueMap valueMap) =
     ValueMap (M.insert name (type_, value) valueMap)
 
-lookupVariable :: (Raiser m) => VariableIdent -> ValueMap -> CompilerErr.Position -> m (LLVM.Type, LLVM.Register)
+lookupVariable :: (Raiser m) => VariableIdent -> ValueMap -> CompilerErr.Position
+                  -> m (LatteCommon.Type, LLVM.Register)
 lookupVariable ident (ValueMap valueMap) position =
     maybe (raise
      CompilerErr.CEUndefinedVariable { CompilerErr.ceVariableIdent = ident
                                      , CompilerErr.cePosition = position })
       return (M.lookup ident valueMap)
 
-setVariableM :: CompilerErr.Position -> VariableIdent -> LLVM.Type -> LLVM.Register -> StatementM ()
+setVariableM :: CompilerErr.Position -> VariableIdent -> LatteCommon.Type
+                -> LLVM.Register -> StatementM ()
 setVariableM position name type_ value =
   do state <- get
      when (name `elem` ssNewScopeVars state) $

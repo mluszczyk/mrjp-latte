@@ -13,12 +13,13 @@ data Value = VConst Integer
                | VFalse
                | VGetElementPtr Int String
                | VUndef
+               | VNull
                deriving (Eq, Ord)
 
 data Register = Register Int | RArgument String
               deriving (Eq, Ord, Show)
 
-data Type = Ti32 | Tvoid | Ti1 | Ti8Ptr deriving (Eq, Ord)
+data Type = Ti32 | Tvoid | Ti1 | Ti8 | Ptr Type deriving (Eq, Ord)
 data Instr = ICall Type String [(Type, Value)] (Maybe Register)
                | IRetVoid
                | IRet Type Value
@@ -72,6 +73,7 @@ showValue (VGetElementPtr num string) =
   "getelementptr inbounds ([" ++ show num ++ " x i8], [" ++
   show num ++ " x i8]* @" ++ string ++ ", i32 0, i32 0)"
 showValue VUndef = "undef"
+showValue VNull = "null"
 
 showRegister :: Register -> String
 showRegister (Register num) =  "%unnamed_" ++ show num
@@ -81,7 +83,8 @@ showType :: Type -> String
 showType Ti32 = "i32"
 showType Tvoid = "void"
 showType Ti1 = "i1"
-showType Ti8Ptr = "i8*"
+showType Ti8 = "i8"
+showType (Ptr type_) = showType type_ ++ "*"
 
 indent :: String -> String
 indent = ("  " ++)
