@@ -25,27 +25,35 @@ import ErrM
   ',' { PT _ (TS _ 10) }
   '-' { PT _ (TS _ 11) }
   '--' { PT _ (TS _ 12) }
-  '/' { PT _ (TS _ 13) }
-  ';' { PT _ (TS _ 14) }
-  '<' { PT _ (TS _ 15) }
-  '<=' { PT _ (TS _ 16) }
-  '=' { PT _ (TS _ 17) }
-  '==' { PT _ (TS _ 18) }
-  '>' { PT _ (TS _ 19) }
-  '>=' { PT _ (TS _ 20) }
-  'boolean' { PT _ (TS _ 21) }
-  'else' { PT _ (TS _ 22) }
-  'false' { PT _ (TS _ 23) }
-  'if' { PT _ (TS _ 24) }
-  'int' { PT _ (TS _ 25) }
-  'return' { PT _ (TS _ 26) }
-  'string' { PT _ (TS _ 27) }
-  'true' { PT _ (TS _ 28) }
-  'void' { PT _ (TS _ 29) }
-  'while' { PT _ (TS _ 30) }
-  '{' { PT _ (TS _ 31) }
-  '||' { PT _ (TS _ 32) }
-  '}' { PT _ (TS _ 33) }
+  '.' { PT _ (TS _ 13) }
+  '/' { PT _ (TS _ 14) }
+  ':' { PT _ (TS _ 15) }
+  ';' { PT _ (TS _ 16) }
+  '<' { PT _ (TS _ 17) }
+  '<=' { PT _ (TS _ 18) }
+  '=' { PT _ (TS _ 19) }
+  '==' { PT _ (TS _ 20) }
+  '>' { PT _ (TS _ 21) }
+  '>=' { PT _ (TS _ 22) }
+  '[' { PT _ (TS _ 23) }
+  '[]' { PT _ (TS _ 24) }
+  ']' { PT _ (TS _ 25) }
+  'boolean' { PT _ (TS _ 26) }
+  'else' { PT _ (TS _ 27) }
+  'false' { PT _ (TS _ 28) }
+  'for' { PT _ (TS _ 29) }
+  'if' { PT _ (TS _ 30) }
+  'int' { PT _ (TS _ 31) }
+  'length' { PT _ (TS _ 32) }
+  'new' { PT _ (TS _ 33) }
+  'return' { PT _ (TS _ 34) }
+  'string' { PT _ (TS _ 35) }
+  'true' { PT _ (TS _ 36) }
+  'void' { PT _ (TS _ 37) }
+  'while' { PT _ (TS _ 38) }
+  '{' { PT _ (TS _ 39) }
+  '||' { PT _ (TS _ 40) }
+  '}' { PT _ (TS _ 41) }
 
   L_integ {PT _ (TI _)}
   L_quoted {PT _ (TL _)}
@@ -150,6 +158,9 @@ Stmt :: {
 | CIdent '=' Expr ';' {
   (fst $1, AbsLatte.Ass (fst $1)(snd $1)(snd $3)) 
 }
+| CIdent '[' Expr ']' '=' Expr ';' {
+  (fst $1, AbsLatte.SetItem (fst $1)(snd $1)(snd $3)(snd $6)) 
+}
 | CIdent '++' ';' {
   (fst $1, AbsLatte.Incr (fst $1)(snd $1)) 
 }
@@ -170,6 +181,9 @@ Stmt :: {
 }
 | 'while' '(' Expr ')' Stmt {
   (Just (tokenLineCol $1), AbsLatte.While (Just (tokenLineCol $1)) (snd $3)(snd $5)) 
+}
+| 'for' '(' Type CIdent ':' Expr ')' Stmt {
+  (Just (tokenLineCol $1), AbsLatte.ForEach (Just (tokenLineCol $1)) (snd $3)(snd $4)(snd $6)(snd $8)) 
 }
 | Expr ';' {
   (fst $1, AbsLatte.SExp (fst $1)(snd $1)) 
@@ -210,6 +224,9 @@ Type :: {
 | 'void' {
   (Just (tokenLineCol $1), AbsLatte.Void (Just (tokenLineCol $1)))
 }
+| Type '[]' {
+  (fst $1, AbsLatte.Array (fst $1)(snd $1)) 
+}
 
 ListType :: {
   (Maybe (Int, Int), [Type (Maybe (Int, Int))]) 
@@ -239,11 +256,14 @@ Expr6 :: {
 | 'false' {
   (Just (tokenLineCol $1), AbsLatte.ELitFalse (Just (tokenLineCol $1)))
 }
+| String {
+  (fst $1, AbsLatte.EString (fst $1)(snd $1)) 
+}
 | CIdent '(' ListExpr ')' {
   (fst $1, AbsLatte.EApp (fst $1)(snd $1)(snd $3)) 
 }
-| String {
-  (fst $1, AbsLatte.EString (fst $1)(snd $1)) 
+| CIdent '[' ListExpr ']' {
+  (fst $1, AbsLatte.EAt (fst $1)(snd $1)(snd $3)) 
 }
 | '(' Expr ')' {
   (Just (tokenLineCol $1), snd $2)
@@ -252,7 +272,10 @@ Expr6 :: {
 Expr5 :: {
   (Maybe (Int, Int), Expr (Maybe (Int, Int)))
 }
-: '-' Expr6 {
+: Expr6 '.' 'length' {
+  (fst $1, AbsLatte.ELength (fst $1)(snd $1)) 
+}
+| '-' Expr6 {
   (Just (tokenLineCol $1), AbsLatte.Neg (Just (tokenLineCol $1)) (snd $2)) 
 }
 | '!' Expr6 {
@@ -307,6 +330,9 @@ Expr :: {
 }
 : Expr1 '||' Expr {
   (fst $1, AbsLatte.EOr (fst $1)(snd $1)(snd $3)) 
+}
+| 'new' Type '[' Expr ']' {
+  (Just (tokenLineCol $1), AbsLatte.ENew (Just (tokenLineCol $1)) (snd $2)(snd $4)) 
 }
 | Expr1 {
   (fst $1, snd $1)

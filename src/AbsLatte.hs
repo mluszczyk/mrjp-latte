@@ -37,6 +37,7 @@ data Stmt a
     | BStmt a (Block a)
     | Decl a (Type a) [Item a]
     | Ass a CIdent (Expr a)
+    | SetItem a CIdent (Expr a) (Expr a)
     | Incr a CIdent
     | Decr a CIdent
     | Ret a (Expr a)
@@ -44,6 +45,7 @@ data Stmt a
     | Cond a (Expr a) (Stmt a)
     | CondElse a (Expr a) (Stmt a) (Stmt a)
     | While a (Expr a) (Stmt a)
+    | ForEach a (Type a) CIdent (Expr a) (Stmt a)
     | SExp a (Expr a)
   deriving (Eq, Ord, Show, Read)
 
@@ -53,6 +55,7 @@ instance Functor Stmt where
         BStmt a block -> BStmt (f a) (fmap f block)
         Decl a type_ items -> Decl (f a) (fmap f type_) (map (fmap f) items)
         Ass a cident expr -> Ass (f a) cident (fmap f expr)
+        SetItem a cident expr1 expr2 -> SetItem (f a) cident (fmap f expr1) (fmap f expr2)
         Incr a cident -> Incr (f a) cident
         Decr a cident -> Decr (f a) cident
         Ret a expr -> Ret (f a) (fmap f expr)
@@ -60,6 +63,7 @@ instance Functor Stmt where
         Cond a expr stmt -> Cond (f a) (fmap f expr) (fmap f stmt)
         CondElse a expr stmt1 stmt2 -> CondElse (f a) (fmap f expr) (fmap f stmt1) (fmap f stmt2)
         While a expr stmt -> While (f a) (fmap f expr) (fmap f stmt)
+        ForEach a type_ cident expr stmt -> ForEach (f a) (fmap f type_) cident (fmap f expr) (fmap f stmt)
         SExp a expr -> SExp (f a) (fmap f expr)
 data Item a = NoInit a CIdent | Init a CIdent (Expr a)
   deriving (Eq, Ord, Show, Read)
@@ -69,7 +73,12 @@ instance Functor Item where
         NoInit a cident -> NoInit (f a) cident
         Init a cident expr -> Init (f a) cident (fmap f expr)
 data Type a
-    = Int a | Str a | Bool a | Void a | Fun a (Type a) [Type a]
+    = Int a
+    | Str a
+    | Bool a
+    | Void a
+    | Array a (Type a)
+    | Fun a (Type a) [Type a]
   deriving (Eq, Ord, Show, Read)
 
 instance Functor Type where
@@ -78,14 +87,17 @@ instance Functor Type where
         Str a -> Str (f a)
         Bool a -> Bool (f a)
         Void a -> Void (f a)
+        Array a type_ -> Array (f a) (fmap f type_)
         Fun a type_ types -> Fun (f a) (fmap f type_) (map (fmap f) types)
 data Expr a
     = EVar a CIdent
     | ELitInt a Integer
     | ELitTrue a
     | ELitFalse a
-    | EApp a CIdent [Expr a]
     | EString a String
+    | EApp a CIdent [Expr a]
+    | EAt a CIdent [Expr a]
+    | ELength a (Expr a)
     | Neg a (Expr a)
     | Not a (Expr a)
     | EMul a (Expr a) (MulOp a) (Expr a)
@@ -93,6 +105,7 @@ data Expr a
     | ERel a (Expr a) (RelOp a) (Expr a)
     | EAnd a (Expr a) (Expr a)
     | EOr a (Expr a) (Expr a)
+    | ENew a (Type a) (Expr a)
   deriving (Eq, Ord, Show, Read)
 
 instance Functor Expr where
@@ -101,8 +114,10 @@ instance Functor Expr where
         ELitInt a integer -> ELitInt (f a) integer
         ELitTrue a -> ELitTrue (f a)
         ELitFalse a -> ELitFalse (f a)
-        EApp a cident exprs -> EApp (f a) cident (map (fmap f) exprs)
         EString a string -> EString (f a) string
+        EApp a cident exprs -> EApp (f a) cident (map (fmap f) exprs)
+        EAt a cident exprs -> EAt (f a) cident (map (fmap f) exprs)
+        ELength a expr -> ELength (f a) (fmap f expr)
         Neg a expr -> Neg (f a) (fmap f expr)
         Not a expr -> Not (f a) (fmap f expr)
         EMul a expr1 mulop expr2 -> EMul (f a) (fmap f expr1) (fmap f mulop) (fmap f expr2)
@@ -110,6 +125,7 @@ instance Functor Expr where
         ERel a expr1 relop expr2 -> ERel (f a) (fmap f expr1) (fmap f relop) (fmap f expr2)
         EAnd a expr1 expr2 -> EAnd (f a) (fmap f expr1) (fmap f expr2)
         EOr a expr1 expr2 -> EOr (f a) (fmap f expr1) (fmap f expr2)
+        ENew a type_ expr -> ENew (f a) (fmap f type_) (fmap f expr)
 data AddOp a = Plus a | Minus a
   deriving (Eq, Ord, Show, Read)
 

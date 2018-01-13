@@ -30,6 +30,7 @@ transStmt x = case x of
   BStmt _ block -> failure x
   Decl _ type_ items -> failure x
   Ass _ cident expr -> failure x
+  SetItem _ cident expr1 expr2 -> failure x
   Incr _ cident -> failure x
   Decr _ cident -> failure x
   Ret _ expr -> failure x
@@ -37,6 +38,7 @@ transStmt x = case x of
   Cond _ expr stmt -> failure x
   CondElse _ expr stmt1 stmt2 -> failure x
   While _ expr stmt -> failure x
+  ForEach _ type_ cident expr stmt -> failure x
   SExp _ expr -> failure x
 transItem :: Show a => Item a -> Result
 transItem x = case x of
@@ -48,6 +50,7 @@ transType x = case x of
   Str _ -> failure x
   Bool _ -> failure x
   Void _ -> failure x
+  Array _ type_ -> failure x
   Fun _ type_ types -> failure x
 transExpr :: Show a => Expr a -> Result
 transExpr x = case x of
@@ -55,8 +58,10 @@ transExpr x = case x of
   ELitInt _ integer -> failure x
   ELitTrue _ -> failure x
   ELitFalse _ -> failure x
-  EApp _ cident exprs -> failure x
   EString _ string -> failure x
+  EApp _ cident exprs -> failure x
+  EAt _ cident exprs -> failure x
+  ELength _ expr -> failure x
   Neg _ expr -> failure x
   Not _ expr -> failure x
   EMul _ expr1 mulop expr2 -> failure x
@@ -64,6 +69,7 @@ transExpr x = case x of
   ERel _ expr1 relop expr2 -> failure x
   EAnd _ expr1 expr2 -> failure x
   EOr _ expr1 expr2 -> failure x
+  ENew _ type_ expr -> failure x
 transAddOp :: Show a => AddOp a -> Result
 transAddOp x = case x of
   Plus _ -> failure x

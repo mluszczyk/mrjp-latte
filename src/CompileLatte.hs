@@ -101,6 +101,7 @@ compileType (AbsLatte.Void _) = LLVM.Tvoid
 compileType (AbsLatte.Bool _) = LLVM.Ti1
 compileType (AbsLatte.Str _) = LLVM.Ti8Ptr
 compileType AbsLatte.Fun {} = error "unreachable"
+compileType (AbsLatte.Array _ _) = error "unimplemented"
 
 -- must be evaluated after checking that main function exists
 getMainPosition :: [AbsLatte.TopDef Position] -> Position
@@ -319,6 +320,9 @@ compileStmt (AbsLatte.While position expr stmt) =
      emitInstruction $ LLVM.IBrCond LLVM.Ti1 cond bodyBlock contBlock
      emitInstruction $ LLVM.ILabel contBlock
 
+compileStmt AbsLatte.SetItem {} = error "unimplemented set item"
+compileStmt AbsLatte.ForEach {} = error "unimplemented for each"
+
 compileIncrDecrHelper :: Position -> AbsLatte.CIdent -> LLVM.ArithmOp -> StatementM ()
 compileIncrDecrHelper pos ident arithmOp =
   do valueMap <- readValueMapS
@@ -418,6 +422,13 @@ compileExpr (AbsLatte.EMul pos exp1 mulOp exp2) =
   compileArithm pos exp1 (compileMulOperator mulOp) exp2
 compileExpr (AbsLatte.ERel pos exp1 relOp exp2) =
   compileArithm pos exp1 (compileRelOp relOp) exp2
+
+compileExpr AbsLatte.EAt {} =
+  error "unimplemented EAt"
+compileExpr (AbsLatte.ELength _ _) =
+  error "unimplemented ELength"
+compileExpr AbsLatte.ENew {} =
+  error "unimplemented ENew"
 
 getOpInst :: LLVM.Type -> LatteCommon.Operation -> LLVM.Type
              -> Maybe (LLVM.Type, LLVM.Value -> LLVM.Value -> LLVM.Register -> LLVM.Instr)

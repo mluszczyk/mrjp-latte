@@ -30,17 +30,19 @@ CIdent literals are recognized by the regular expression
 The set of reserved words is the set of terminals appearing in the grammar. Those reserved words that consist of non-letter characters are called symbols, and they are treated in a different way from those that are similar to identifiers. The lexer follows rules familiar from languages like Haskell, C, and Java, including longest match and spacing conventions.
 
 The reserved words used in Latte are the following:
-  | ``boolean`` | ``else`` | ``false`` | ``if``
-  | ``int`` | ``return`` | ``string`` | ``true``
-  | ``void`` | ``while`` |  | 
+  | ``boolean`` | ``else`` | ``false`` | ``for``
+  | ``if`` | ``int`` | ``length`` | ``new``
+  | ``return`` | ``string`` | ``true`` | ``void``
+  | ``while`` |  |  | 
 
 The symbols used in Latte are the following:
   | ( | ) | , | {
-  | } | ; | = | ++
-  | -- | - | ! | &&
-  | || | + | * | /
-  | % | < | <= | >
-  | >= | == | != | 
+  | } | ; | = | [
+  | ] | ++ | -- | :
+  | [] | . | - | !
+  | && | || | + | *
+  | / | % | < | <=
+  | > | >= | == | !=
 
 ===Comments===
 Single-line comments begin with #, //.Multiple-line comments are  enclosed with /* and */.
@@ -66,6 +68,7 @@ All other symbols are terminals.
   |  |  **|**  | //Block// 
   |  |  **|**  | //Type// //[Item]// ``;`` 
   |  |  **|**  | //CIdent// ``=`` //Expr// ``;`` 
+  |  |  **|**  | //CIdent// ``[`` //Expr// ``]`` ``=`` //Expr// ``;`` 
   |  |  **|**  | //CIdent// ``++`` ``;`` 
   |  |  **|**  | //CIdent// ``--`` ``;`` 
   |  |  **|**  | ``return`` //Expr// ``;`` 
@@ -73,6 +76,7 @@ All other symbols are terminals.
   |  |  **|**  | ``if`` ``(`` //Expr// ``)`` //Stmt// 
   |  |  **|**  | ``if`` ``(`` //Expr// ``)`` //Stmt// ``else`` //Stmt// 
   |  |  **|**  | ``while`` ``(`` //Expr// ``)`` //Stmt// 
+  |  |  **|**  | ``for`` ``(`` //Type// //CIdent// ``:`` //Expr// ``)`` //Stmt// 
   |  |  **|**  | //Expr// ``;`` 
   | //Item// | -> | //CIdent// 
   |  |  **|**  | //CIdent// ``=`` //Expr// 
@@ -82,6 +86,7 @@ All other symbols are terminals.
   |  |  **|**  | ``string`` 
   |  |  **|**  | ``boolean`` 
   |  |  **|**  | ``void`` 
+  |  |  **|**  | //Type// ``[]`` 
   | //[Type]// | -> | **eps**
   |  |  **|**  | //Type// 
   |  |  **|**  | //Type// ``,`` //[Type]// 
@@ -89,10 +94,12 @@ All other symbols are terminals.
   |  |  **|**  | //Integer// 
   |  |  **|**  | ``true`` 
   |  |  **|**  | ``false`` 
-  |  |  **|**  | //CIdent// ``(`` //[Expr]// ``)`` 
   |  |  **|**  | //String// 
+  |  |  **|**  | //CIdent// ``(`` //[Expr]// ``)`` 
+  |  |  **|**  | //CIdent// ``[`` //[Expr]// ``]`` 
   |  |  **|**  | ``(`` //Expr// ``)`` 
-  | //Expr5// | -> | ``-`` //Expr6// 
+  | //Expr5// | -> | //Expr6// ``.`` ``length`` 
+  |  |  **|**  | ``-`` //Expr6// 
   |  |  **|**  | ``!`` //Expr6// 
   |  |  **|**  | //Expr6// 
   | //Expr4// | -> | //Expr4// //MulOp// //Expr5// 
@@ -104,6 +111,7 @@ All other symbols are terminals.
   | //Expr1// | -> | //Expr2// ``&&`` //Expr1// 
   |  |  **|**  | //Expr2// 
   | //Expr// | -> | //Expr1// ``||`` //Expr// 
+  |  |  **|**  | ``new`` //Type// ``[`` //Expr// ``]`` 
   |  |  **|**  | //Expr1// 
   | //[Expr]// | -> | **eps**
   |  |  **|**  | //Expr// 
