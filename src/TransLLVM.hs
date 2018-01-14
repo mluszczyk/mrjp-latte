@@ -220,17 +220,14 @@ removeUnusedAssignments function =
     usedAssignments :: S.Set LLVM.Register
     usedAssignments = foldl S.union S.empty (map (S.fromList . getUsedRegisters) (listInstrs function))
 
-    isUsed instr = case getMResult instr of
-      Nothing -> True
-      Just reg -> reg `S.member` usedAssignments
+    isUsed instr | hasSideEffect instr = True
+    isUsed instr = any (`S.member` usedAssignments)
+                       (map snd (setRegisters instr))
 
-    getMResult (LLVM.IArithm _ _ _ _ reg) = Just reg
-    getMResult (LLVM.IIcmp _ _ _ _ reg) = Just reg
-    getMResult (LLVM.IPhi _ _ reg) = Just reg
-    getMResult (LLVM.ILoad _ _ _ reg) = Just reg
-    getMResult (LLVM.IAlloca _ reg) = Just reg
-    getMResult _ = Nothing  -- ICall should return Nothing,
-                            -- mind the side effects!
+    hasSideEffect instr = case instr of
+      LLVM.ICall {} -> True
+      LLVM.IStore {} -> True
+      _ -> False
 
     goArg :: (LLVM.Type, Maybe String) -> (LLVM.Type, Maybe String)
     goArg (argType, Just name)
@@ -289,7 +286,7 @@ setRegisters instr = case instr of
   LLVM.IIcmp _ _ _ _ reg -> [(LLVM.Ti1, reg)]
   LLVM.IPhi type_ _ reg -> [(type_, reg)]
   LLVM.IUnreachable -> []
-  LLVM.IGetElementPtr type_ _ _ reg -> [(type_, reg)]
+  LLVM.IGetElementPtr type_ _ _ reg -> [(LLVM.Ptr type_, reg)]
   LLVM.IBitcast _ type_ reg -> [(type_, reg)]
   LLVM.ISext _ type_ reg -> [(type_, reg)]
 
