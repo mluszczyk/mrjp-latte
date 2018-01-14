@@ -356,8 +356,8 @@ transInstrM (LLVM.ILoad type_ _ regSrc regDst) _ reg2Mem _ _ = do
 transInstrM (LLVM.IStore type_ valSrc _ regDst) _ reg2Mem _ _ = do
   src <- transVal valSrc reg2Mem
   dst <- transVal (LLVM.VRegister regDst) reg2Mem
-  tell (IMov SQuad dst (VRegister Rrax) :
-        smartmov (typeToSize type_) src (VAddressReg Rrax) )
+  tell (IMov SQuad dst (VRegister Rrcx) :  -- cannot be rax when src=const string
+        smartmov (typeToSize type_) src (VAddressReg Rrcx) )
 transInstrM LLVM.IAlloca {} _ _ _ _ =
   error "transInstrM LLVM.IAlloca: unreachable"
 transInstrM LLVM.IUnreachable _ _ _ _ =
