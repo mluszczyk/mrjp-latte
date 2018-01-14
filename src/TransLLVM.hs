@@ -257,8 +257,8 @@ accessedVals instr = case instr of
   LLVM.IBr _ -> []
   LLVM.IBrCond type_ v _ _-> [(type_, v)]
   LLVM.ILabel _ -> []
-  LLVM.ILoad _ typePtr _ r2 -> -- TODO: type inaccurate
-    [(typePtr, LLVM.VRegister r2)]
+  LLVM.ILoad _ typePtr ptr _ -> -- TODO: type inaccurate
+    [(typePtr, LLVM.VRegister ptr)]
   LLVM.IStore typeVal val typePtr ptr ->
     [(typeVal, val), (typePtr, LLVM.VRegister ptr)]
   LLVM.IAlloca _ _ -> []
@@ -280,8 +280,8 @@ setRegisters instr = case instr of
   LLVM.IBr _ -> []
   LLVM.IBrCond {} -> []
   LLVM.ILabel _ -> []
-  LLVM.ILoad typeVal _ r1 _ ->
-    [(typeVal, r1)]
+  LLVM.ILoad type_ _ _ reg ->
+    [(type_, reg)]
   LLVM.IStore _ _ typeReg reg ->  -- TODO: inacurate type
     [(typeReg, reg)]
   LLVM.IAlloca type_ reg ->  -- TODO: inaccurate type
