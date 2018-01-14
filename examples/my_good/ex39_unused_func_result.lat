@@ -1,0 +1,14 @@
+int foo() {
+  return 6;
+} 
+
+int id(int x) {
+  return x;
+}
+
+int main() {
+  int x = id(5);
+  int y = foo();
+  printInt(x);
+  return 0;
+}

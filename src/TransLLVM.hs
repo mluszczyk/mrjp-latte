@@ -207,7 +207,7 @@ mapValInFunc go = mapFuncInstrs (mapValInInstr go)
 
 removeUnusedAssignments :: LLVM.Function -> LLVM.Function
 removeUnusedAssignments function =
-    (filterInnerInstrs isUsed function)
+    (mapFuncInstrs dropUnusedFuncRes (filterInnerInstrs isUsed function))
       { LLVM.fArgs = map goArg (LLVM.fArgs function)}
   where
     getUsedValues :: LLVM.Instr -> [LLVM.Value]
@@ -223,6 +223,11 @@ removeUnusedAssignments function =
     isUsed instr | hasSideEffect instr = True
     isUsed instr = any (`S.member` usedAssignments)
                        (map snd (setRegisters instr))
+
+    dropUnusedFuncRes (LLVM.ICall retType name args (Just result))
+      | not (result `S.member` usedAssignments) =
+        LLVM.ICall retType name args Nothing
+    dropUnusedFuncRes instr = instr
 
     hasSideEffect instr = case instr of
       LLVM.ICall {} -> True
