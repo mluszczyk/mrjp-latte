@@ -256,7 +256,8 @@ accessedVals instr = case instr of
   LLVM.ILabel _ -> []
   LLVM.ILoad _ typePtr _ r2 -> -- TODO: type inaccurate
     [(typePtr, LLVM.VRegister r2)]
-  LLVM.IStore typeVal val _ _ -> [(typeVal, val)]
+  LLVM.IStore typeVal val typePtr ptr ->
+    [(typeVal, val), (typePtr, LLVM.VRegister ptr)]
   LLVM.IAlloca _ _ -> []
   LLVM.IIcmp _ type_ v1 v2 _ -> [(type_, v1), (type_, v2)]
   LLVM.IPhi type_ pairs _ ->

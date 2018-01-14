@@ -1,0 +1,8 @@
+int main() {
+  int count = 0;
+  for (int x : new int[6]) {
+    count++;
+  }
+  printInt(count);
+  return 0;
+}

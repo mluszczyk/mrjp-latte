@@ -209,9 +209,9 @@ compileFunc signatures (AbsLatte.FnDef fPosition type_ ident args (AbsLatte.Bloc
      lType = compileType type_
 
      optimise func nextRegister0 = do
-       let (func1, nextRegister1) = TransLLVM.mem2Reg func nextRegister0
-       func2 <- TransLLVM.fixEqM optimiseStep func1
-       return (func2, nextRegister1)
+       -- let (func1, nextRegister1) = TransLLVM.mem2Reg func nextRegister0
+       func2 <- TransLLVM.fixEqM optimiseStep func
+       return (func2, nextRegister0)
 
      optimiseStep func1 = do
        func2 <- TransLLVM.constantProp func1
@@ -348,6 +348,46 @@ compileStmt (AbsLatte.While position expr stmt) =
      emitInstruction $ LLVM.IBrCond LLVM.Ti1 cond bodyBlock contBlock
      emitInstruction $ LLVM.ILabel contBlock
 
+compileStmt (AbsLatte.ForEach pos absIterType iterIdent arrayExpr stmt) =
+  do (array, arrayType) <- exprInStatement $ compileExpr arrayExpr
+     elemType <- exprInStatement $ elementType arrayType pos
+     let iterType = compileType absIterType
+         llvmIterType = typeToLLVM iterType
+     checkType pos elemType iterType "for loop iterator"
+     arrayLen <- exprInStatement $ arrayLength array
+     condBlock <- getNextLabelE
+     bodyBlock <- getNextLabelE
+     contBlock <- getNextLabelE
+     arrayIndex <- getNextRegisterE
+     arrayIndexInc <- getNextRegisterE
+     preLoop <- getCurrentBlock
+     elemVarPtr <- getNextRegisterE
+     emitInstruction $ LLVM.IAlloca llvmIterType elemVarPtr
+     emitInstruction $ LLVM.IBr condBlock
+     emitInstruction $ LLVM.ILabel bodyBlock
+     emitInstruction $ LLVM.IArithm LLVM.Ti32 (LLVM.VRegister arrayIndex)
+                       (LLVM.VConst 1) LLVM.OAdd arrayIndexInc
+     (elementPtr, _) <- exprInStatement $
+        arrayElementPtrVal elemType array (LLVM.VRegister arrayIndex)
+     element <- getNextRegisterE
+     emitInstruction $ LLVM.ILoad llvmIterType llvmIterType elementPtr element
+     emitInstruction $ LLVM.IStore llvmIterType (LLVM.VRegister element)
+                       llvmIterType elemVarPtr
+     setVariableM (compilePosition pos) iterIdent iterType elemVarPtr
+     exprInStatement $ compileFlowBlock stmt condBlock
+     emitInstruction $ LLVM.ILabel condBlock
+     emitInstruction $ LLVM.IPhi LLVM.Ti32
+                       [ (LLVM.VRegister arrayIndexInc, bodyBlock)
+                       , (LLVM.VConst 0, preLoop) ]
+                       arrayIndex
+     cond <- getNextRegisterE
+     emitInstruction $ LLVM.IIcmp LLVM.RelOpSLT LLVM.Ti32
+                       (LLVM.VRegister arrayIndex) (LLVM.VRegister arrayLen)
+                       cond
+     emitInstruction $ LLVM.IBrCond LLVM.Ti1 (LLVM.VRegister cond)
+                       bodyBlock contBlock
+     emitInstruction $ LLVM.ILabel contBlock
+
 compileStmt (AbsLatte.SetItem pos arrayIdent indexExpr rightExpr) =
   do (elemPtr, elemType) <- exprInStatement $
        arrayElementPtr pos arrayIdent indexExpr
@@ -355,7 +395,6 @@ compileStmt (AbsLatte.SetItem pos arrayIdent indexExpr rightExpr) =
      checkType pos elemType rightValType "setting array element"
      let llvmElemType = typeToLLVM elemType
      emitInstruction $ LLVM.IStore llvmElemType rightVal llvmElemType elemPtr
-compileStmt AbsLatte.ForEach {} = error "unimplemented for each"
 
 compileIncrDecrHelper :: Position -> AbsLatte.CIdent -> LLVM.ArithmOp -> StatementM ()
 compileIncrDecrHelper pos ident arithmOp =
@@ -470,11 +509,7 @@ compileExpr (AbsLatte.EAt pos ident numExpr) =
 compileExpr (AbsLatte.ELength pos expr) =
   do (byteArray, exprType) <- compileExpr expr
      _ <- elementType exprType pos
-     lengthPtr <- getNextRegisterE
-     emitInstruction $ LLVM.IBitcast (LLVM.Ptr LLVM.Ti8, byteArray)
-                                     (LLVM.Ptr LLVM.Ti32) lengthPtr
-     length_ <- getNextRegisterE
-     emitInstruction $ LLVM.ILoad LLVM.Ti32 LLVM.Ti32 lengthPtr length_
+     length_ <- arrayLength byteArray
      return (LLVM.VRegister length_, LatteCommon.Int)
 
 compileExpr (AbsLatte.ENew pos absType numExpr) =
@@ -507,10 +542,15 @@ arrayElementPtr pos arrayIdent numExpr =
      emitInstruction $ LLVM.ILoad (typeToLLVM arrayType) (typeToLLVM arrayType)
                                   arrayPtr array
      elemType <- elementType arrayType pos
-     let llvmElemType = typeToLLVM elemType
+     arrayElementPtrVal elemType (LLVM.VRegister array) num
+
+arrayElementPtrVal :: LatteCommon.Type -> LLVM.Value -> LLVM.Value
+                      -> ExprM (LLVM.Register, LatteCommon.Type)
+arrayElementPtrVal elemType array num =
+  do let llvmElemType = typeToLLVM elemType
      elemByteArray <- getNextRegisterE
      emitInstruction $ LLVM.IGetElementPtr LLVM.Ti8
-                                           (LLVM.Ptr LLVM.Ti8, LLVM.VRegister array)
+                                           (LLVM.Ptr LLVM.Ti8, array)
                                            (LLVM.Ti32, LLVM.VConst lengthSize)
                                            elemByteArray
      elemArray <- getNextRegisterE
@@ -522,6 +562,15 @@ arrayElementPtr pos arrayIdent numExpr =
                                            (LLVM.Ti32, num) elemPtr
      return (elemPtr, elemType)
 
+
+arrayLength :: LLVM.Value -> ExprM LLVM.Register
+arrayLength byteArray =
+  do lengthPtr <- getNextRegisterE
+     emitInstruction $ LLVM.IBitcast (LLVM.Ptr LLVM.Ti8, byteArray)
+                                     (LLVM.Ptr LLVM.Ti32) lengthPtr
+     length_ <- getNextRegisterE
+     emitInstruction $ LLVM.ILoad LLVM.Ti32 LLVM.Ti32 lengthPtr length_
+     return length_
 
 getOpInst :: LatteCommon.Type -> LatteCommon.Operation -> LatteCommon.Type
              -> Maybe (LatteCommon.Type, LLVM.Value -> LLVM.Value -> LLVM.Register -> LLVM.Instr)
