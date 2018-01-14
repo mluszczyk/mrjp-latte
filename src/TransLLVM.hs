@@ -195,6 +195,9 @@ mapValInInstrM go (LLVM.IGetElementPtr elemType (arrayType, array)
 mapValInInstrM go (LLVM.IBitcast (srcType, val) dstType reg) = do
   val' <- go val
   return $ LLVM.IBitcast (srcType, val') dstType reg
+mapValInInstrM go (LLVM.ISext (srcType, val) dstType reg) = do
+  val' <- go val
+  return $ LLVM.ISext (srcType, val') dstType reg
 
 mapValInInstr :: (LLVM.Value -> LLVM.Value) -> LLVM.Instr -> LLVM.Instr
 mapValInInstr go instr = mapValInInstrM (\ val () -> go val) instr ()
@@ -265,6 +268,7 @@ accessedVals instr = case instr of
   LLVM.IUnreachable -> []
   LLVM.IGetElementPtr _ arrayPair indexPair _ -> [arrayPair, indexPair]
   LLVM.IBitcast pair _ _ -> [pair]
+  LLVM.ISext pair _ _ -> [pair]
 
 setRegisters :: LLVM.Instr -> [(LLVM.Type, LLVM.Register)]
 setRegisters instr = case instr of
@@ -287,6 +291,7 @@ setRegisters instr = case instr of
   LLVM.IUnreachable -> []
   LLVM.IGetElementPtr type_ _ _ reg -> [(type_, reg)]
   LLVM.IBitcast _ type_ reg -> [(type_, reg)]
+  LLVM.ISext _ type_ reg -> [(type_, reg)]
 
 listRegisters :: LLVM.Function -> [(LLVM.Type, LLVM.Register)]
 listRegisters function = S.toList $ S.fromList (

@@ -41,9 +41,9 @@ hiddenBuiltins =
            , LLVM.Declare strneName $ LLVM.FunctionType
              [LLVM.Ptr LLVM.Ti8, LLVM.Ptr LLVM.Ti8] LLVM.Ti1
            , LLVM.Declare mallocName $ LLVM.FunctionType
-             [LLVM.Ti32] (LLVM.Ptr LLVM.Ti8)
+             [LLVM.Ti64] (LLVM.Ptr LLVM.Ti8)
            , LLVM.Declare memsetName $ LLVM.FunctionType
-             [LLVM.Ptr LLVM.Ti8, LLVM.Ti32, LLVM.Ti32] (LLVM.Ptr LLVM.Ti8)
+             [LLVM.Ptr LLVM.Ti8, LLVM.Ti32, LLVM.Ti64] (LLVM.Ptr LLVM.Ti8)
            ]
 
 concatName :: String
@@ -531,9 +531,12 @@ compileExpr (AbsLatte.ENew pos absType numExpr) =
      emitInstruction $ LLVM.IArithm LLVM.Ti32 (LLVM.VRegister size)
                        (LLVM.VConst lengthSize)
                        LLVM.OAdd augSize
+     augSize64 <- getNextRegisterE
+     emitInstruction $ LLVM.ISext (LLVM.Ti32, LLVM.VRegister augSize)
+                       LLVM.Ti64 augSize64
      array <- getNextRegisterE
      emitInstruction $ LLVM.ICall (LLVM.Ptr LLVM.Ti8) mallocName
-                       [(LLVM.Ti32, LLVM.VRegister augSize)]
+                       [(LLVM.Ti64, LLVM.VRegister augSize64)]
                        (Just array)
      lengthPtr <- getNextRegisterE
      emitInstruction $ LLVM.IBitcast (LLVM.Ptr LLVM.Ti8, LLVM.VRegister array)
@@ -545,10 +548,12 @@ compileExpr (AbsLatte.ENew pos absType numExpr) =
                        (LLVM.Ptr LLVM.Ti8, LLVM.VRegister array)
                        (LLVM.Ti32, LLVM.VConst lengthSize)
                        tailBytes
+     size64 <- getNextRegisterE
+     emitInstruction $ LLVM.ISext (LLVM.Ti32, LLVM.VRegister size) LLVM.Ti64 size64
      emitInstruction $ LLVM.ICall (LLVM.Ptr LLVM.Ti8) memsetName
                        [ ( LLVM.Ptr LLVM.Ti8, LLVM.VRegister tailBytes )
                        , ( LLVM.Ti32, LLVM.VConst 0 )
-                       , ( LLVM.Ti32, LLVM.VRegister size )]
+                       , ( LLVM.Ti64, LLVM.VRegister size64 )]
                        Nothing
      return (LLVM.VRegister array, LatteCommon.Array latteType)
   where

@@ -42,6 +42,7 @@ data Instr = IPush Size Value
              | ICmp Size Value Value
              | ILeave
              | IRet
+             | ICltd
 
 data Size = SByte | SLong | SQuad
 
@@ -49,6 +50,8 @@ data Value = VRegister Register
            | VConst Integer
            | VAddress Int Register
            | VGlobal String
+           | VAddressMul Register Register Int
+           | VAddressReg Register
 data Register = Rrbp | Rrsp | Redi | Resi
                 | Reax | Redx | Recx | Rebx
                 | Rr8d | Rr9d | Rr10d | Rr11d
@@ -88,9 +91,15 @@ fromLLVM (LLVM.Module globals _ functions) =
   Module $ concatMap transFunc functions ++ map transGlobal globals
 
 smartmov :: Size -> Value -> Value -> [Instr]
-smartmov size val1@(VAddress _ _) val2@(VAddress _ _)  =
+smartmov size val1 val2 | isMem val1 && isMem val2 =
   [IMov size val1 (VRegister (castRegister Rrax size)),
    IMov size (VRegister (castRegister Rrax size)) val2]
+  where
+    isMem value = case value of
+      VAddress _ _ -> True
+      VAddressMul {} -> True
+      VAddressReg _ -> True
+      _ -> False
 smartmov size val1 val2 =
   [IMov size val1 val2]
 
@@ -138,7 +147,10 @@ transFunc function@(LLVM.Function _ name args blocks) =
        coloursForRegArgs :: [Int]
        coloursForRegArgs = M.keys regArgColourToReg
        regArgColourToReg :: M.Map Int Register
-       regArgColourToReg = M.fromList (mapMaybe argNumToRegister colourToArgNum)
+       regArgColourToReg =
+         M.fromList $
+         filter (\(_, reg) -> reg `elem` allocatedRegisters) $
+         mapMaybe argNumToRegister colourToArgNum
          where
            colourToArgNum :: [(Int, Int)]
            colourToArgNum = mapMaybe (extractArgNum . swap) (M.toList regColours)
@@ -336,18 +348,44 @@ transInstrM (LLVM.IBrCond _ val label1 label2)
 transInstrM LLVM.IPhi {} _ _ _ _ = tell []
 transInstrM LLVM.ILabel {} _ _ _ _ =
   error "transInstrM LLVM.ILabel: unreachable"
-transInstrM LLVM.ILoad {} _ _ _ _ =
-  error "transInstrM LLVM.ILoad: unreachable"
-transInstrM LLVM.IStore {} _ _ _ _ =
-  error "transInstrM LLVM.IStore: unreachable"
+transInstrM (LLVM.ILoad type_ _ regSrc regDst) _ reg2Mem _ _ = do
+  src <- transVal (LLVM.VRegister regSrc) reg2Mem
+  dst <- transVal (LLVM.VRegister regDst) reg2Mem
+  tell (IMov SQuad src (VRegister Rrax) :
+        smartmov (typeToSize type_) (VAddressReg Rrax) dst )
+transInstrM (LLVM.IStore type_ valSrc _ regDst) _ reg2Mem _ _ = do
+  src <- transVal valSrc reg2Mem
+  dst <- transVal (LLVM.VRegister regDst) reg2Mem
+  tell (IMov SQuad dst (VRegister Rrax) :
+        smartmov (typeToSize type_) src (VAddressReg Rrax) )
 transInstrM LLVM.IAlloca {} _ _ _ _ =
   error "transInstrM LLVM.IAlloca: unreachable"
 transInstrM LLVM.IUnreachable _ _ _ _ =
   error "transInstrM LLVM.IUnreachable: unreachable"
-transInstrM LLVM.IBitcast {} _ _ _ _ =
-  error "transInstrM LLVM.IBitcast: unimplemented"
-transInstrM LLVM.IGetElementPtr {} _ _ _ _ =
-  error "transInstrM LLVM.IGetElementPtr: unimplemented"
+transInstrM (LLVM.IBitcast (_, val) _ reg) _ reg2Mem _ _ = do
+  src <- transVal val reg2Mem
+  dst <- transVal (LLVM.VRegister reg) reg2Mem
+  tell (smartmov SQuad src dst)
+transInstrM (LLVM.IGetElementPtr elemType (_, array)
+             (_, index) res) _ reg2Mem _ _ = do
+  base <- transVal array reg2Mem
+  indexVal <- transVal index reg2Mem
+  let mul = sizeToInt (typeToSize elemType)
+  dst <- transVal (LLVM.VRegister res) reg2Mem
+  tell [ IMov SLong indexVal (VRegister Reax)
+       , ICltd
+       , IMov SQuad base (VRegister Rrcx)
+       , ILeaq (VAddressMul Rrcx Rrax mul) (VRegister Rrax)
+       , IMov SQuad (VRegister Rrax) dst ]
+transInstrM (LLVM.ISext (LLVM.Ti32, srcValue) LLVM.Ti64 dstReg) _ reg2Mem _ _ =
+  do src <- transVal srcValue reg2Mem
+     dst <- transVal (LLVM.VRegister dstReg) reg2Mem
+     let size = typeToSize LLVM.Ti32
+     tell [ IMov size src (VRegister (castRegister Rrax size))
+           , ICltd
+           , IMov SQuad (VRegister Rrax) dst ]
+transInstrM LLVM.ISext {} _ _ _ _ =
+  error "transInstrM (LLVM.ISext {}) _ _ _ _: unreachable"
 
 transPhis :: TransLLVM.CollectedPhis -> LLVM.Label -> LLVM.Label -> Reg2Mem
              -> InstrWriter ()
@@ -428,6 +466,7 @@ showInstr (ITestb val1 val2) = "testb " ++ showVal val1 ++ ", " ++ showVal val2
 showInstr (ICmp size val1 val2) =
   "cmp" ++ showSuffix size ++ " " ++ showVal val1 ++ ", " ++ showVal val2
 showInstr (ILeaq val1 val2) = "leaq " ++ showVal val1 ++ ", " ++ showVal val2
+showInstr ICltd = "cltd"
 
 showSuffix :: Size -> String
 showSuffix suf = case suf of
@@ -440,6 +479,9 @@ showVal (VRegister reg) = "%" ++ showRegister reg
 showVal (VConst num) = "$" ++ show num
 showVal (VAddress displ base) = show displ ++ "(%" ++ showRegister base ++ ")"
 showVal (VGlobal str) = str ++ "(%rip)"
+showVal (VAddressMul base index mul) =
+  "(%" ++ showRegister base ++ ",%" ++ showRegister index ++ "," ++ show mul ++ ")"
+showVal (VAddressReg reg) = "(%" ++ showRegister reg ++ ")"
 
 showRegister :: Register -> String
 showRegister reg = case reg of
@@ -475,11 +517,18 @@ showRegister reg = case reg of
   Rebx -> "ebx"
 
 typeToSize :: LLVM.Type -> Size
+typeToSize LLVM.Ti64 = SQuad
 typeToSize LLVM.Ti32 = SLong
 typeToSize (LLVM.Ptr _) = SQuad
 typeToSize LLVM.Ti1 = SByte
 typeToSize LLVM.Ti8 = SByte
-typeToSize _ = error "typeToSize: unreachable"
+typeToSize LLVM.Tvoid = error "typeToSize Tvoid: unreachable"
+
+sizeToInt :: Size -> Int
+sizeToInt size = case size of
+  SQuad -> 8
+  SLong -> 4
+  SByte -> 1
 
 castRegister :: Register -> Size -> Register
 castRegister reg SLong = case reg of
@@ -512,6 +561,8 @@ castRegister reg SQuad = case reg of
   Recx -> Rrcx
   Rr8d -> Rr8
   Rr9d -> Rr9
+  Rr10d -> Rr10
+  Rr11d -> Rr11
   Reax -> Rrax
 
   Rdil -> Rrdi
@@ -530,8 +581,8 @@ castRegister reg SQuad = case reg of
   Rrcx -> Rrcx
   Rr8 -> Rr8
   Rr9 -> Rr9
-  Rr10d -> Rr10
-  Rr11d -> Rr11
+  Rr10 -> Rr10
+  Rr11 -> Rr11
   Rrax -> Rrax
 
   _ -> error "castRegister _ SQuad: unreachable"

@@ -5,7 +5,7 @@ LATTELIB="lattelib.c"
 TEST_TEMPLATE="${TMPDIR}latteXXX"
 TEST_DIR=`mktemp -d "$TEST_TEMPLATE"`
 
-# consider adding 
+# add later: ../mrjp-tests/good/arrays/*.lat
 for input_file in examples/my_good/*.lat ../lattests/good/*.lat ../mrjp-tests/good/basic/*.lat; do
   LAT_DIR=`dirname "$input_file"`
   BASENAME=`basename "$input_file" .lat`

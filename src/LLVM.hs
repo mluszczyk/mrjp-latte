@@ -19,7 +19,7 @@ data Value = VConst Integer
 data Register = Register Int | RArgument String
               deriving (Eq, Ord, Show)
 
-data Type = Ti32 | Tvoid | Ti1 | Ti8 | Ptr Type deriving (Eq, Ord)
+data Type = Ti64 | Ti32 | Tvoid | Ti1 | Ti8 | Ptr Type deriving (Eq, Ord)
 data Instr = ICall Type String [(Type, Value)] (Maybe Register)
                | IRetVoid
                | IRet Type Value
@@ -35,6 +35,7 @@ data Instr = ICall Type String [(Type, Value)] (Maybe Register)
                | IUnreachable
                | IGetElementPtr Type (Type, Value) (Type, Value) Register
                | IBitcast (Type, Value) Type Register
+               | ISext (Type, Value) Type Register
                deriving Eq
 
 data Block =  Block { bLabel :: Label
@@ -82,6 +83,7 @@ showRegister (Register num) =  "%unnamed_" ++ show num
 showRegister (RArgument string) = "%arg_" ++ string
 
 showType :: Type -> String
+showType Ti64 = "i64"
 showType Ti32 = "i32"
 showType Tvoid = "void"
 showType Ti1 = "i1"
@@ -130,6 +132,10 @@ showInst (IGetElementPtr elemType (arrayType, array) (indexType, index) result) 
 showInst (IBitcast (srcType, srcValue) dstType reg) =
   showRegister reg ++ " = " ++
   "bitcast " ++ showType srcType ++ " " ++ showValue srcValue ++ " to " ++
+  showType dstType
+showInst (ISext (srcType, srcValue) dstType reg) =
+  showRegister reg ++ " = " ++
+  "sext " ++ showType srcType ++ " " ++ showValue srcValue ++ " to " ++
   showType dstType
 showInst IUnreachable = "unreachable"
 
