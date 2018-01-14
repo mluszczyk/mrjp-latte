@@ -332,7 +332,9 @@ mapBlockInstrsM go block =
     return block { LLVM.bInnerInstrs = instrs, LLVM.bExitInstr = exitInstr }
 
 mem2Reg :: LLVM.Function -> CS.NextRegister -> (LLVM.Function, CS.NextRegister)
-mem2Reg function nextRegister0 = (function { LLVM.fBlocks = newBlocks } , nextRegister1)
+mem2Reg function nextRegister0 =
+  ( trans update function { LLVM.fBlocks = newBlocks }
+  , nextRegister1 )
   where
     (initVars, nextRegister1) = runState
           (mapM (\ _ -> mapM (const getNextRegisterM) allocedPtrs)
@@ -344,7 +346,8 @@ mem2Reg function nextRegister0 = (function { LLVM.fBlocks = newBlocks } , nextRe
       put newState
       return reg
 
-    (noMemBlocks, blockPtrValLists) = unzip $ zipWith goBlock (LLVM.fBlocks function) initVars
+    (noMemBlocks, blockPtrValLists, updates) =
+      unzip3 $ zipWith goBlock (LLVM.fBlocks function) initVars
     blockPtrVal = M.fromList (zip (map LLVM.bLabel noMemBlocks) blockPtrValLists)
     blockPhis :: [[LLVM.Instr]]
     blockPhis = [
@@ -365,8 +368,7 @@ mem2Reg function nextRegister0 = (function { LLVM.fBlocks = newBlocks } , nextRe
         ptrToVal = if null (predecessors block) then
           M.fromList (map (\ptr -> (ptr, LLVM.VUndef)) ptrRegs) else
           M.fromList (zip ptrRegs (map LLVM.VRegister blockInitVars))
-        (block1, rest, _) = blockMem2Reg block ptrRegs ptrToVal M.empty
-      in (block1, rest)
+      in blockMem2Reg block ptrRegs ptrToVal M.empty
     allocedPtrs = mapMaybe (\ instr -> case instr of
         LLVM.IAlloca t a -> Just (t, a)
         _ -> Nothing) (listInstrs function)
@@ -378,6 +380,13 @@ mem2Reg function nextRegister0 = (function { LLVM.fBlocks = newBlocks } , nextRe
         | LLVM.bLabel blockDst == dstLabel1 ||
           LLVM.bLabel blockDst == dstLabel2 -> True
       _ -> False
+
+    update = M.unions updates
+
+    trans valUp = mapValInFunc (transVal valUp)
+    transVal valUp (LLVM.VRegister reg) =
+      fromMaybe (LLVM.VRegister reg) (M.lookup reg valUp)
+    transVal _ other = other
 
 
 blockMem2Reg :: LLVM.Block

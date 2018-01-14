@@ -209,9 +209,9 @@ compileFunc signatures (AbsLatte.FnDef fPosition type_ ident args (AbsLatte.Bloc
      lType = compileType type_
 
      optimise func nextRegister0 = do
-       -- let (func1, nextRegister1) = TransLLVM.mem2Reg func nextRegister0
-       func2 <- TransLLVM.fixEqM optimiseStep func
-       return (func2, nextRegister0)
+       let (func1, nextRegister1) = TransLLVM.mem2Reg func nextRegister0
+       func2 <- TransLLVM.fixEqM optimiseStep func1
+       return (func2, nextRegister1)
 
      optimiseStep func1 = do
        func2 <- TransLLVM.constantProp func1
