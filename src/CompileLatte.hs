@@ -34,10 +34,16 @@ builtins = [ (AbsLatte.CIdent "printInt"
 
 hiddenBuiltins :: [LLVM.Declare]
 hiddenBuiltins =
-           [ LLVM.Declare concatName $ LLVM.FunctionType [LLVM.Ptr LLVM.Ti8, LLVM.Ptr LLVM.Ti8] (LLVM.Ptr LLVM.Ti8)
-           , LLVM.Declare streqName $ LLVM.FunctionType [LLVM.Ptr LLVM.Ti8, LLVM.Ptr LLVM.Ti8] LLVM.Ti1
-           , LLVM.Declare strneName $ LLVM.FunctionType [LLVM.Ptr LLVM.Ti8, LLVM.Ptr LLVM.Ti8] LLVM.Ti1
-           , LLVM.Declare mallocName $ LLVM.FunctionType [LLVM.Ti32] (LLVM.Ptr LLVM.Ti8)
+           [ LLVM.Declare concatName $ LLVM.FunctionType
+             [LLVM.Ptr LLVM.Ti8, LLVM.Ptr LLVM.Ti8] (LLVM.Ptr LLVM.Ti8)
+           , LLVM.Declare streqName $ LLVM.FunctionType
+             [LLVM.Ptr LLVM.Ti8, LLVM.Ptr LLVM.Ti8] LLVM.Ti1
+           , LLVM.Declare strneName $ LLVM.FunctionType
+             [LLVM.Ptr LLVM.Ti8, LLVM.Ptr LLVM.Ti8] LLVM.Ti1
+           , LLVM.Declare mallocName $ LLVM.FunctionType
+             [LLVM.Ti32] (LLVM.Ptr LLVM.Ti8)
+           , LLVM.Declare memsetName $ LLVM.FunctionType
+             [LLVM.Ptr LLVM.Ti8, LLVM.Ti32, LLVM.Ti32] (LLVM.Ptr LLVM.Ti8)
            ]
 
 concatName :: String
@@ -48,12 +54,11 @@ strneName :: String
 strneName = "strne"
 mallocName :: String
 mallocName = "malloc"
+memsetName :: String
+memsetName = "memset"
 
 lengthSize :: Integer
 lengthSize = 4  -- used in arrays
-
-emptyStringConst :: LLVM.Constant
-emptyStringConst = LLVM.Constant 1 "empty_string" ""
 
 mainFunctionName :: AbsLatte.CIdent
 mainFunctionName = AbsLatte.CIdent "main"
@@ -142,7 +147,7 @@ latteToLLVM (AbsLatte.Program _ topDefs) =
   do checkDuplicateFnDefs topDefs
      let signatures = collectSignatures topDefs
      checkMainSignature signatures (getMainPosition topDefs)
-     (functions, globals, _) <- foldM (go signatures) ([], [emptyStringConst], initConstCounter) topDefs
+     (functions, globals, _) <- foldM (go signatures) ([], [], initConstCounter) topDefs
      return  LLVM.Module { LLVM.mGlobals = globals
                                , LLVM.mDeclares = map builtinToLLVM builtins ++ hiddenBuiltins
                                , LLVM.mFunctions = functions }
@@ -221,10 +226,12 @@ compileFunc signatures (AbsLatte.FnDef fPosition type_ ident args (AbsLatte.Bloc
        return func5
 
 defaultValue :: LatteCommon.Type -> LLVM.Value
+-- Default value has to be equivalent to zero bits for consistency
+-- with array initialisation.
 defaultValue LatteCommon.Boolean  = LLVM.VFalse
 defaultValue LatteCommon.Int = LLVM.VConst 0
 defaultValue LatteCommon.Void = error "unreachable"
-defaultValue LatteCommon.String = LLVM.VGetElementPtr 1 "empty_string"
+defaultValue LatteCommon.String = LLVM.VNull
 defaultValue (LatteCommon.Array _) = LLVM.VNull
 
 typeToLLVM :: LatteCommon.Type -> LLVM.Type
@@ -513,23 +520,45 @@ compileExpr (AbsLatte.ELength pos expr) =
      return (LLVM.VRegister length_, LatteCommon.Int)
 
 compileExpr (AbsLatte.ENew pos absType numExpr) =
-  -- TODO: assign default value
   do (num, numType) <- compileExpr numExpr
      let latteType = compileType absType
      checkType pos LatteCommon.Int numType "new"
-     augNum <- getNextRegisterE
-     emitInstruction $ LLVM.IArithm LLVM.Ti32 num (LLVM.VConst lengthSize)
-                       LLVM.OAdd augNum
+     size <- getNextRegisterE
+     emitInstruction $ LLVM.IArithm LLVM.Ti32 num
+                       (LLVM.VConst (elementSize latteType))
+                       LLVM.OMul size
+     augSize <- getNextRegisterE
+     emitInstruction $ LLVM.IArithm LLVM.Ti32 (LLVM.VRegister size)
+                       (LLVM.VConst lengthSize)
+                       LLVM.OAdd augSize
      array <- getNextRegisterE
      emitInstruction $ LLVM.ICall (LLVM.Ptr LLVM.Ti8) mallocName
-                       [(LLVM.Ti32, LLVM.VRegister augNum)]
+                       [(LLVM.Ti32, LLVM.VRegister augSize)]
                        (Just array)
      lengthPtr <- getNextRegisterE
      emitInstruction $ LLVM.IBitcast (LLVM.Ptr LLVM.Ti8, LLVM.VRegister array)
                        (LLVM.Ptr LLVM.Ti32) lengthPtr
      emitInstruction $ LLVM.IStore LLVM.Ti32 num
                                    LLVM.Ti32 lengthPtr
+     tailBytes <- getNextRegisterE
+     emitInstruction $ LLVM.IGetElementPtr LLVM.Ti8
+                       (LLVM.Ptr LLVM.Ti8, LLVM.VRegister array)
+                       (LLVM.Ti32, LLVM.VConst lengthSize)
+                       tailBytes
+     emitInstruction $ LLVM.ICall (LLVM.Ptr LLVM.Ti8) memsetName
+                       [ ( LLVM.Ptr LLVM.Ti8, LLVM.VRegister tailBytes )
+                       , ( LLVM.Ti32, LLVM.VConst 0 )
+                       , ( LLVM.Ti32, LLVM.VRegister size )]
+                       Nothing
      return (LLVM.VRegister array, LatteCommon.Array latteType)
+  where
+    elementSize :: LatteCommon.Type -> Integer
+    elementSize type_ = case type_ of
+      LatteCommon.Array _ -> 8
+      LatteCommon.String -> 8
+      LatteCommon.Int -> 4
+      LatteCommon.Boolean -> 1
+      LatteCommon.Void -> error "unreachable"
 
 arrayElementPtr :: Position -> AbsLatte.CIdent -> AbsLatte.Expr Position
                    -> ExprM (LLVM.Register, LatteCommon.Type)

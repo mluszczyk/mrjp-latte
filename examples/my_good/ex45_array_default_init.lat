@@ -1,0 +1,13 @@
+int main() {
+  int[] int_tab = new int[10];
+  string[] string_tab = new string[10];
+
+  int_tab[4] = 5;
+  string_tab[3] = "blah blah";
+  printInt(int_tab[3]);
+  printInt(int_tab[4]);
+  printString(string_tab[1]);
+  printString("<" + string_tab[2] + ">");
+  printString("<" + string_tab[3] + ">");
+  return 0;
+}

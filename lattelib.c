@@ -12,10 +12,13 @@ void latte_printInt(int num) {
 }
 
 void latte_printString(const char* str) {
+  if (str == NULL) str = "";
   puts(str);
 }
 
 char* concat(const char* str1, const char* str2) {
+  if (str1 == NULL) str1 = "";
+  if (str2 == NULL) str2 = "";
   char* res = malloc(sizeof(char) * (strlen(str1) + strlen(str2) + 1));
   strcpy(res, str1);
   strcat(res, str2);
@@ -23,6 +26,8 @@ char* concat(const char* str1, const char* str2) {
 }
 
 bool streq(const char* str1, const char* str2) {
+  if (str1 == NULL) str1 = "";
+  if (str2 == NULL) str2 = "";
   return (strcmp(str1, str2) == 0);
 }
 
