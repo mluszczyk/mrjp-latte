@@ -29,6 +29,8 @@ data CompilerError = CEUndefinedVariable { ceVariableIdent :: VariableIdent
                                  , ceExpectedType :: Type
                                  , ceActualType :: Type
                                  , ceDescription :: String }
+                   | CEArrayTypeError { cePosition :: Position
+                                      , ceActualType :: Type }
                    | CERedefinitionOfVariable { cePosition :: Position
                                               , ceVariableIdent :: VariableIdent }
                    | CEVoidFunctionArgument { cePosition :: Position
@@ -102,6 +104,9 @@ errorToString (CEExprReturnInVoid pos) =
   "return with a value illegal in void function " ++ showPosition pos
 errorToString CEDivisionByZero =
   "division by zero found during optimization"
+errorToString (CEArrayTypeError pos actType) =
+  "type error, expected array, got " ++ showType actType ++ " " ++
+  showPosition pos
 
 showVariableIdent :: VariableIdent -> String
 showVariableIdent (AbsLatte.CIdent string) = string

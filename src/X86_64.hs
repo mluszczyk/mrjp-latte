@@ -344,6 +344,10 @@ transInstrM LLVM.IAlloca {} _ _ _ _ =
   error "transInstrM LLVM.IAlloca: unreachable"
 transInstrM LLVM.IUnreachable _ _ _ _ =
   error "transInstrM LLVM.IUnreachable: unreachable"
+transInstrM LLVM.IBitcast {} _ _ _ _ =
+  error "transInstrM LLVM.IBitcast: unimplemented"
+transInstrM LLVM.IGetElementPtr {} _ _ _ _ =
+  error "transInstrM LLVM.IGetElementPtr: unimplemented"
 
 transPhis :: TransLLVM.CollectedPhis -> LLVM.Label -> LLVM.Label -> Reg2Mem
              -> InstrWriter ()

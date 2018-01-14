@@ -1,0 +1,13 @@
+void foo(int[] a1, int[] a2, int[] a3) {
+  printInt(a1.length);
+  printInt(a2.length);
+  printInt(a3.length);
+}
+
+int main() {
+  int[] array1 = new int[17], array2 = new int[41];
+  printInt(array1.length);
+  printInt(array2.length);
+  foo(array2, array1, array2);
+  return 0;
+}

@@ -37,6 +37,7 @@ hiddenBuiltins =
            [ LLVM.Declare concatName $ LLVM.FunctionType [LLVM.Ptr LLVM.Ti8, LLVM.Ptr LLVM.Ti8] (LLVM.Ptr LLVM.Ti8)
            , LLVM.Declare streqName $ LLVM.FunctionType [LLVM.Ptr LLVM.Ti8, LLVM.Ptr LLVM.Ti8] LLVM.Ti1
            , LLVM.Declare strneName $ LLVM.FunctionType [LLVM.Ptr LLVM.Ti8, LLVM.Ptr LLVM.Ti8] LLVM.Ti1
+           , LLVM.Declare mallocName $ LLVM.FunctionType [LLVM.Ti32] (LLVM.Ptr LLVM.Ti8)
            ]
 
 concatName :: String
@@ -45,6 +46,11 @@ streqName :: String
 streqName = "streq"
 strneName :: String
 strneName = "strne"
+mallocName :: String
+mallocName = "malloc"
+
+lengthSize :: Integer
+lengthSize = 4  -- used in arrays
 
 emptyStringConst :: LLVM.Constant
 emptyStringConst = LLVM.Constant 1 "empty_string" ""
@@ -210,8 +216,8 @@ compileFunc signatures (AbsLatte.FnDef fPosition type_ ident args (AbsLatte.Bloc
      optimiseStep func1 = do
        func2 <- TransLLVM.constantProp func1
        let func3 = TransLLVM.removeUnreachableBlocks func2
-       let func4 = TransLLVM.removeTrivialPhis func3
-       let func5 = TransLLVM.removeUnusedAssignments func4
+           func4 = TransLLVM.removeTrivialPhis func3
+           func5 = TransLLVM.removeUnusedAssignments func4
        return func5
 
 defaultValue :: LatteCommon.Type -> LLVM.Value
@@ -227,7 +233,7 @@ typeToLLVM type_ = case type_ of
   LatteCommon.Int -> LLVM.Ti32
   LatteCommon.Boolean -> LLVM.Ti1
   LatteCommon.String -> LLVM.Ptr LLVM.Ti8
-  LatteCommon.Array innerType -> LLVM.Ptr (typeToLLVM innerType)
+  LatteCommon.Array _ -> LLVM.Ptr LLVM.Ti8
 
 compileFlowBlock :: AbsLatte.Stmt Position -> LLVM.Label -> ExprM ()
 compileFlowBlock stmt nextBlock =
@@ -342,7 +348,13 @@ compileStmt (AbsLatte.While position expr stmt) =
      emitInstruction $ LLVM.IBrCond LLVM.Ti1 cond bodyBlock contBlock
      emitInstruction $ LLVM.ILabel contBlock
 
-compileStmt AbsLatte.SetItem {} = error "unimplemented set item"
+compileStmt (AbsLatte.SetItem pos arrayIdent indexExpr rightExpr) =
+  do (elemPtr, elemType) <- exprInStatement $
+       arrayElementPtr pos arrayIdent indexExpr
+     (rightVal, rightValType) <- exprInStatement $ compileExpr rightExpr
+     checkType pos elemType rightValType "setting array element"
+     let llvmElemType = typeToLLVM elemType
+     emitInstruction $ LLVM.IStore llvmElemType rightVal llvmElemType elemPtr
 compileStmt AbsLatte.ForEach {} = error "unimplemented for each"
 
 compileIncrDecrHelper :: Position -> AbsLatte.CIdent -> LLVM.ArithmOp -> StatementM ()
@@ -446,12 +458,70 @@ compileExpr (AbsLatte.EMul pos exp1 mulOp exp2) =
 compileExpr (AbsLatte.ERel pos exp1 relOp exp2) =
   compileArithm pos exp1 (compileRelOp relOp) exp2
 
-compileExpr AbsLatte.EAt {} =
-  error "unimplemented EAt"
-compileExpr (AbsLatte.ELength _ _) =
-  error "unimplemented ELength"
-compileExpr AbsLatte.ENew {} =
-  error "unimplemented ENew"
+compileExpr (AbsLatte.EAt pos ident numExpr) =
+  do (elemPtr, elemType) <- arrayElementPtr pos ident numExpr
+     elem_ <- getNextRegisterE
+     let llvmElemType = typeToLLVM elemType
+     emitInstruction $ LLVM.ILoad llvmElemType
+                                  llvmElemType elemPtr
+                                  elem_
+     return (LLVM.VRegister elem_, elemType)
+
+compileExpr (AbsLatte.ELength pos expr) =
+  do (byteArray, exprType) <- compileExpr expr
+     _ <- elementType exprType pos
+     lengthPtr <- getNextRegisterE
+     emitInstruction $ LLVM.IBitcast (LLVM.Ptr LLVM.Ti8, byteArray)
+                                     (LLVM.Ptr LLVM.Ti32) lengthPtr
+     length_ <- getNextRegisterE
+     emitInstruction $ LLVM.ILoad LLVM.Ti32 LLVM.Ti32 lengthPtr length_
+     return (LLVM.VRegister length_, LatteCommon.Int)
+
+compileExpr (AbsLatte.ENew pos absType numExpr) =
+  -- TODO: assign default value
+  do (num, numType) <- compileExpr numExpr
+     let latteType = compileType absType
+     checkType pos LatteCommon.Int numType "new"
+     augNum <- getNextRegisterE
+     emitInstruction $ LLVM.IArithm LLVM.Ti32 num (LLVM.VConst lengthSize)
+                       LLVM.OAdd augNum
+     array <- getNextRegisterE
+     emitInstruction $ LLVM.ICall (LLVM.Ptr LLVM.Ti8) mallocName
+                       [(LLVM.Ti32, LLVM.VRegister augNum)]
+                       (Just array)
+     lengthPtr <- getNextRegisterE
+     emitInstruction $ LLVM.IBitcast (LLVM.Ptr LLVM.Ti8, LLVM.VRegister array)
+                       (LLVM.Ptr LLVM.Ti32) lengthPtr
+     emitInstruction $ LLVM.IStore LLVM.Ti32 num
+                                   LLVM.Ti32 lengthPtr
+     return (LLVM.VRegister array, LatteCommon.Array latteType)
+
+arrayElementPtr :: Position -> AbsLatte.CIdent -> AbsLatte.Expr Position
+                   -> ExprM (LLVM.Register, LatteCommon.Type)
+arrayElementPtr pos arrayIdent numExpr =
+  do (num, numType) <- compileExpr numExpr
+     checkType pos LatteCommon.Int numType "array index"
+     valueMap <- readValueMap
+     (arrayType, arrayPtr) <- lookupVariable arrayIdent valueMap (compilePosition pos)
+     array <- getNextRegisterE
+     emitInstruction $ LLVM.ILoad (typeToLLVM arrayType) (typeToLLVM arrayType)
+                                  arrayPtr array
+     elemType <- elementType arrayType pos
+     let llvmElemType = typeToLLVM elemType
+     elemByteArray <- getNextRegisterE
+     emitInstruction $ LLVM.IGetElementPtr LLVM.Ti8
+                                           (LLVM.Ptr LLVM.Ti8, LLVM.VRegister array)
+                                           (LLVM.Ti32, LLVM.VConst lengthSize)
+                                           elemByteArray
+     elemArray <- getNextRegisterE
+     emitInstruction $ LLVM.IBitcast (LLVM.Ptr LLVM.Ti8, LLVM.VRegister elemByteArray)
+                                     (LLVM.Ptr llvmElemType) elemArray
+     elemPtr <- getNextRegisterE
+     emitInstruction $ LLVM.IGetElementPtr llvmElemType
+                                           (LLVM.Ptr llvmElemType, LLVM.VRegister elemArray)
+                                           (LLVM.Ti32, num) elemPtr
+     return (elemPtr, elemType)
+
 
 getOpInst :: LatteCommon.Type -> LatteCommon.Operation -> LatteCommon.Type
              -> Maybe (LatteCommon.Type, LLVM.Value -> LLVM.Value -> LLVM.Register -> LLVM.Instr)
@@ -574,6 +644,12 @@ checkType pos expType actType description | expType == actType = return ()
 checkNotVoid :: (Raiser m) => LatteCommon.Type -> CE.CompilerError -> m ()
 checkNotVoid LatteCommon.Void ce = raise ce
 checkNotVoid _ _ = return ()
+
+elementType :: LatteCommon.Type -> Position -> ExprM LatteCommon.Type
+elementType type_ pos_ = case type_ of
+  LatteCommon.Array elemType -> return elemType
+  other -> raise CE.CEArrayTypeError { CE.cePosition = compilePosition pos_
+                                     , CE.ceActualType = other }
 
 compileAddOperator :: AbsLatte.AddOp a -> LatteCommon.Operation
 compileAddOperator (AbsLatte.Plus _) = LatteCommon.Add

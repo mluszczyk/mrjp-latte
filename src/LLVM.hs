@@ -33,6 +33,8 @@ data Instr = ICall Type String [(Type, Value)] (Maybe Register)
                | IIcmp Cond Type Value Value Register
                | IPhi Type [(LLVM.Value, LLVM.Label)] Register
                | IUnreachable
+               | IGetElementPtr Type (Type, Value) (Type, Value) Register
+               | IBitcast (Type, Value) Type Register
                deriving Eq
 
 data Block =  Block { bLabel :: Label
@@ -121,6 +123,14 @@ showInst (IPhi type_ items res) =
   showRegister res ++ " = phi " ++ showType type_ ++ " " ++ intercalate ", " (map
       (\ (value, label) -> "[" ++ showValue value ++ ", %" ++ showLabel label ++ "]")
       items)
+showInst (IGetElementPtr elemType (arrayType, array) (indexType, index) result) =
+  showRegister result ++ " = " ++ "getelementptr inbounds " ++
+  showType elemType ++ ", " ++ showType arrayType ++ " " ++ showValue array ++
+  ", " ++ showType indexType ++ " " ++ showValue index
+showInst (IBitcast (srcType, srcValue) dstType reg) =
+  showRegister reg ++ " = " ++
+  "bitcast " ++ showType srcType ++ " " ++ showValue srcValue ++ " to " ++
+  showType dstType
 showInst IUnreachable = "unreachable"
 
 showCall :: Type -> String -> [(Type, Value)] -> String

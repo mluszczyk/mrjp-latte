@@ -186,6 +186,15 @@ mapValInInstrM go (LLVM.IArithm type_ val1 val2 op resultReg) = do
   t1 <- go val1
   t2 <- go val2
   return $ LLVM.IArithm type_ t1 t2 op resultReg
+mapValInInstrM go (LLVM.IGetElementPtr elemType (arrayType, array)
+                                       (indexType, index) res) = do
+  array' <- go array
+  index' <- go index
+  return $ LLVM.IGetElementPtr elemType (arrayType, array')
+                               (indexType, index') res
+mapValInInstrM go (LLVM.IBitcast (srcType, val) dstType reg) = do
+  val' <- go val
+  return $ LLVM.IBitcast (srcType, val') dstType reg
 
 mapValInInstr :: (LLVM.Value -> LLVM.Value) -> LLVM.Instr -> LLVM.Instr
 mapValInInstr go instr = mapValInInstrM (\ val () -> go val) instr ()
@@ -199,19 +208,7 @@ removeUnusedAssignments function =
       { LLVM.fArgs = map goArg (LLVM.fArgs function)}
   where
     getUsedValues :: LLVM.Instr -> [LLVM.Value]
-    getUsedValues (LLVM.ICall _ _ args _) = map snd args
-    getUsedValues (LLVM.IRet _ val) = [val]
-    getUsedValues (LLVM.IBrCond _ val _ _) = [val]
-    getUsedValues (LLVM.IPhi _ args _) = map fst args
-    getUsedValues (LLVM.IIcmp _ _ v1 v2 _) = [v1, v2]
-    getUsedValues (LLVM.ILoad _ _ val _) = [LLVM.VRegister val]
-    getUsedValues (LLVM.IArithm _ v1 v2 _ _) = [v1, v2]
-    getUsedValues (LLVM.IStore _ v1 _ r2) = [v1, LLVM.VRegister r2]
-    getUsedValues LLVM.IRetVoid = []
-    getUsedValues LLVM.IBr {} = []
-    getUsedValues LLVM.ILabel {} = []
-    getUsedValues LLVM.IAlloca {} = []
-    getUsedValues LLVM.IUnreachable = []
+    getUsedValues instr = map snd (accessedVals instr)
 
     getUsedRegisters instr = mapMaybe (\ val -> case val of
       LLVM.VRegister reg -> Just reg
@@ -234,7 +231,7 @@ removeUnusedAssignments function =
 
     goArg :: (LLVM.Type, Maybe String) -> (LLVM.Type, Maybe String)
     goArg (argType, Just name)
-      | not (LLVM.RArgument name `S.member` usedAssignments) = 
+      | not (LLVM.RArgument name `S.member` usedAssignments) =
       (argType, Nothing)
     goArg other = other
 
@@ -265,6 +262,8 @@ accessedVals instr = case instr of
   LLVM.IPhi type_ pairs _ ->
    map (\p -> (type_, fst p)) pairs
   LLVM.IUnreachable -> []
+  LLVM.IGetElementPtr _ arrayPair indexPair _ -> [arrayPair, indexPair]
+  LLVM.IBitcast pair _ _ -> [pair]
 
 setRegisters :: LLVM.Instr -> [(LLVM.Type, LLVM.Register)]
 setRegisters instr = case instr of
@@ -285,6 +284,8 @@ setRegisters instr = case instr of
   LLVM.IIcmp _ _ _ _ reg -> [(LLVM.Ti1, reg)]
   LLVM.IPhi type_ _ reg -> [(type_, reg)]
   LLVM.IUnreachable -> []
+  LLVM.IGetElementPtr type_ _ _ reg -> [(type_, reg)]
+  LLVM.IBitcast _ type_ reg -> [(type_, reg)]
 
 listRegisters :: LLVM.Function -> [(LLVM.Type, LLVM.Register)]
 listRegisters function = S.toList $ S.fromList (

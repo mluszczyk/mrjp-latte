@@ -1,0 +1,16 @@
+int[] range(int len) {
+  int[] range = new int[len];
+  int i = 0;
+  while (i < len) {
+    range[i] = i;
+    i++;
+  }
+  return range;
+}
+
+int main() {
+  int[] range7 = range(7);
+  printInt(range7[3]);
+  printInt(range7[6]);
+  return 0;
+}
