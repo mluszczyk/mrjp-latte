@@ -298,7 +298,7 @@ transInstrM (LLVM.IArithm _ v1 v2 op reg) _ mem2Reg _ _
        , ICdq
        , IMov SLong tv2 (VRegister Recx)
        , IDiv SLong (VRegister Recx)
-       , IMov SLong (VRegister (if op == LLVM.OSDiv then Reax else Rrdx))
+       , IMov SLong (VRegister (if op == LLVM.OSDiv then Reax else Redx))
                tres
        ]
 

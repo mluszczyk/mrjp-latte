@@ -383,8 +383,10 @@ compileStmt (AbsLatte.ForEach pos absIterType iterIdent arrayExpr stmt) =
      emitInstruction $ LLVM.ILoad llvmIterType llvmIterType elementPtr element
      emitInstruction $ LLVM.IStore llvmIterType (LLVM.VRegister element)
                        llvmIterType elemVarPtr
-     setVariableM (compilePosition pos) iterIdent iterType elemVarPtr
-     exprInStatement $ compileFlowBlock stmt condBlock
+     exprInStatement $ statementInExpr $ do
+       setVariableM (compilePosition pos) iterIdent iterType elemVarPtr
+       compileStmt stmt
+       emitInstruction (LLVM.IBr condBlock)
      emitInstruction $ LLVM.ILabel condBlock
      emitInstruction $ LLVM.IPhi LLVM.Ti32
                        [ (LLVM.VRegister arrayIndexInc, bodyBlock)

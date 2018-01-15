@@ -1,0 +1,5 @@
+int main() {
+  boolean[] x = new boolean[4];
+  x[3] = true;
+  return 0;
+}

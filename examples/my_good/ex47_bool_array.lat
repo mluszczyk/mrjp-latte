@@ -1,0 +1,45 @@
+int[] range(int len) {
+  int[] tab = new int[len];
+  int i = 0;
+  while (i < len) {
+    tab[i] = i;
+    i++;
+  }
+  return tab;
+}
+
+int main() {
+  int len = 40;
+  boolean[] x = new boolean[len];
+
+  int seed = 347;
+  int a = 769;
+  int b = 571;
+  int mod = 977;
+  int rand = seed;
+
+  for (int num : range(len)) {
+    x[num] = toBool(rand % 2);
+    printBoolean(x[num]);
+    rand = (a * rand + b) % mod;
+  }
+
+  for (int num : range(len)) {
+    printBoolean(x[num]);
+  }
+
+  for (int num : range(len)) {
+    printBoolean(x[num]);
+  }
+  return 0;
+}
+
+void printBoolean(boolean x) {
+  if (x) printString("true");
+  else printString("false");
+}
+
+boolean toBool(int x) {
+  if (x == 0) return false;
+  else return true;
+}
