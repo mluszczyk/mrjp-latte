@@ -1,7 +1,7 @@
 # latte
 
 ## Features
-The compiler supports the complete Latte language without extensions.
+The compiler supports the complete Latte language including arrays.
 LLVM IR and x86_64 backends are available.
 
 ### Optimisations
