@@ -15,7 +15,7 @@ The code is transformed to SSA first. The following optimisations are applied:
 
 ### Register allocation
 x86_64 backend stores commonly used values in processor registers.
-The implemented algorithm bases on SSA. Inference graph of SSA registers is
+The implemented algorithm bases on SSA. Interference graph of SSA registers is
 built and coloured. Registers with the same colour are assigned to the same
 register or address in memory.
 

@@ -178,7 +178,7 @@ transFunc function@(LLVM.Function _ name args blocks) =
            offset =  -- save place for register backup
              - 8 - length allocatedRegisters * 8
 
-    regColours = colourGraph (TransLLVM.inferenceGraph function)
+    regColours = colourGraph (TransLLVM.interferenceGraph function)
     distinctColours = nub (sort (M.elems regColours))
 
     storeArgs = [IMov size (VRegister (castRegister passReg size))

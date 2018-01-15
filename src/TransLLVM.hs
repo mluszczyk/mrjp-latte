@@ -471,9 +471,9 @@ type CollectedPhis = M.Map (LLVM.Label, LLVM.Label)
                   [(LLVM.Type, LLVM.Register, LLVM.Value)]
 
 
-inferenceGraph :: LLVM.Function
+interferenceGraph :: LLVM.Function
                   -> ([LLVM.Register], [(LLVM.Register, LLVM.Register)])
-inferenceGraph function = (registers, edges)
+interferenceGraph function = (registers, edges)
 
  where
    registers = map snd $ listRegisters function
