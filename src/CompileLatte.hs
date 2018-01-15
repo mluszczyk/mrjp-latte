@@ -169,11 +169,13 @@ compileFunc :: Signatures -> AbsLatte.TopDef Position -> ConstCounter
       -> CompilerErrorM (LLVM.Function, [LLVM.Constant], ConstCounter)
 compileFunc signatures (AbsLatte.FnDef fPosition type_ ident args (AbsLatte.Block _ stmts)) constCounter0 =
    do
-      mapM_ (\ (num, AbsLatte.Arg position argType _) ->
+      checkHasVoidArray fPosition (compileType type_)
+      mapM_ (\ (num, AbsLatte.Arg position argType _) -> do
             checkNotVoid (compileType argType)
                          CE.CEVoidFunctionArgument
                          { CE.cePosition = compilePosition position
-                         , CE.ceArgumentNumber = num })
+                         , CE.ceArgumentNumber = num }
+            checkHasVoidArray position (compileType argType))
             (zip [(1 :: Int)..] args)
       (_, instrs, globals, _, _, nextRegister, constCounter1) <-
         runStatementM signatures (compileType type_) (LLVM.Label 0)
@@ -287,7 +289,8 @@ compileStmt (AbsLatte.Ass pos ident expr) =
      exprInStatement $ compileAssign pos expr type_ ptr
 
 compileStmt (AbsLatte.Decl position type_ decls) =
-   do checkNotVoid (compileType type_) (CE.CEVoidDeclaration (compilePosition position))
+   do checkNotVoid latteType (CE.CEVoidDeclaration (compilePosition position))
+      checkHasVoidArray position latteType
       ptrs <- exprInStatement $ mapM go decls
       mapM_ (\ (decl, ptr) -> setVariableM
                   (compilePosition (getDeclPos decl))
@@ -504,8 +507,12 @@ compileExpr (AbsLatte.EMul pos exp1 mulOp exp2) =
 compileExpr (AbsLatte.ERel pos exp1 relOp exp2) =
   compileArithm pos exp1 (compileRelOp relOp) exp2
 
-compileExpr (AbsLatte.EAt pos ident numExpr) =
-  do (elemPtr, elemType) <- arrayElementPtr pos ident numExpr
+compileExpr (AbsLatte.EAt pos arrayExpr numExpr) =
+  do (array, arrayType) <- compileExpr arrayExpr
+     elemType <- elementType arrayType pos
+     (num, _) <- compileExpr numExpr
+     (elemPtr, _) <- arrayElementPtrVal elemType
+                           array num
      elem_ <- getNextRegisterE
      let llvmElemType = typeToLLVM elemType
      emitInstruction $ LLVM.ILoad llvmElemType
@@ -520,8 +527,10 @@ compileExpr (AbsLatte.ELength pos expr) =
      return (LLVM.VRegister length_, LatteCommon.Int)
 
 compileExpr (AbsLatte.ENew pos absType numExpr) =
-  do (num, numType) <- compileExpr numExpr
-     let latteType = compileType absType
+  do let latteType = compileType absType
+         arrayType = LatteCommon.Array latteType
+     (num, numType) <- compileExpr numExpr
+     checkHasVoidArray pos arrayType
      checkType pos LatteCommon.Int numType "new"
      size <- getNextRegisterE
      emitInstruction $ LLVM.IArithm LLVM.Ti32 num
@@ -555,7 +564,7 @@ compileExpr (AbsLatte.ENew pos absType numExpr) =
                        , ( LLVM.Ti32, LLVM.VConst 0 )
                        , ( LLVM.Ti64, LLVM.VRegister size64 )]
                        Nothing
-     return (LLVM.VRegister array, LatteCommon.Array latteType)
+     return (LLVM.VRegister array, arrayType)
   where
     elementSize :: LatteCommon.Type -> Integer
     elementSize type_ = case type_ of
@@ -563,7 +572,7 @@ compileExpr (AbsLatte.ENew pos absType numExpr) =
       LatteCommon.String -> 8
       LatteCommon.Int -> 4
       LatteCommon.Boolean -> 1
-      LatteCommon.Void -> error "unreachable"
+      LatteCommon.Void -> error "elementSize Void: unreachable"
 
 arrayElementPtr :: Position -> AbsLatte.CIdent -> AbsLatte.Expr Position
                    -> ExprM (LLVM.Register, LatteCommon.Type)
@@ -727,6 +736,16 @@ checkType pos expType actType description | expType == actType = return ()
 checkNotVoid :: (Raiser m) => LatteCommon.Type -> CE.CompilerError -> m ()
 checkNotVoid LatteCommon.Void ce = raise ce
 checkNotVoid _ _ = return ()
+
+checkHasVoidArray :: (Raiser m) => Position -> LatteCommon.Type -> m ()
+checkHasVoidArray pos type_ = when (hasVoidArray type_) $
+  raise CE.CEHasVoidArray { CE.cePosition = compilePosition pos
+                            , CE.ceActualType = type_ }
+  where
+    hasVoidArray checkedType = case checkedType of
+      LatteCommon.Array LatteCommon.Void -> True
+      LatteCommon.Array innerType -> hasVoidArray innerType
+      _ -> False
 
 elementType :: LatteCommon.Type -> Position -> ExprM LatteCommon.Type
 elementType type_ pos_ = case type_ of

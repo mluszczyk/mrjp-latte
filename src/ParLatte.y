@@ -241,7 +241,7 @@ ListType :: {
   (fst $1, (:) (snd $1)(snd $3)) 
 }
 
-Expr6 :: {
+Expr7 :: {
   (Maybe (Int, Int), Expr (Maybe (Int, Int)))
 }
 : CIdent {
@@ -259,14 +259,21 @@ Expr6 :: {
 | String {
   (fst $1, AbsLatte.EString (fst $1)(snd $1)) 
 }
-| CIdent '(' ListExpr ')' {
-  (fst $1, AbsLatte.EApp (fst $1)(snd $1)(snd $3)) 
-}
-| CIdent '[' Expr ']' {
-  (fst $1, AbsLatte.EAt (fst $1)(snd $1)(snd $3)) 
-}
 | '(' Expr ')' {
   (Just (tokenLineCol $1), snd $2)
+}
+
+Expr6 :: {
+  (Maybe (Int, Int), Expr (Maybe (Int, Int)))
+}
+: CIdent '(' ListExpr ')' {
+  (fst $1, AbsLatte.EApp (fst $1)(snd $1)(snd $3)) 
+}
+| Expr7 '[' Expr ']' {
+  (fst $1, AbsLatte.EAt (fst $1)(snd $1)(snd $3)) 
+}
+| Expr7 {
+  (fst $1, snd $1)
 }
 
 Expr5 :: {

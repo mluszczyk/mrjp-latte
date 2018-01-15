@@ -1,0 +1,4 @@
+int main() {
+  new void[100];
+  return 0;
+}

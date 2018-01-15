@@ -51,6 +51,8 @@ data CompilerError = CEUndefinedVariable { ceVariableIdent :: VariableIdent
                                              , ceLowerBound :: Integer
                                              , ceUpperBound :: Integer }
                    | CEExprReturnInVoid { cePosition :: Position }
+                   | CEHasVoidArray { cePosition :: Position
+                                    , ceActualType :: Type }
                    | CEDivisionByZero
 
 showPosition :: Position -> String
@@ -107,6 +109,8 @@ errorToString CEDivisionByZero =
 errorToString (CEArrayTypeError pos actType) =
   "type error, expected array, got " ++ showType actType ++ " " ++
   showPosition pos
+errorToString (CEHasVoidArray pos actType) =
+  "illegal type " ++ showType actType ++ " " ++ showPosition pos
 
 showVariableIdent :: VariableIdent -> String
 showVariableIdent (AbsLatte.CIdent string) = string

@@ -96,7 +96,7 @@ data Expr a
     | ELitFalse a
     | EString a String
     | EApp a CIdent [Expr a]
-    | EAt a CIdent (Expr a)
+    | EAt a (Expr a) (Expr a)
     | ELength a (Expr a)
     | Neg a (Expr a)
     | Not a (Expr a)
@@ -116,7 +116,7 @@ instance Functor Expr where
         ELitFalse a -> ELitFalse (f a)
         EString a string -> EString (f a) string
         EApp a cident exprs -> EApp (f a) cident (map (fmap f) exprs)
-        EAt a cident expr -> EAt (f a) cident (fmap f expr)
+        EAt a expr1 expr2 -> EAt (f a) (fmap f expr1) (fmap f expr2)
         ELength a expr -> ELength (f a) (fmap f expr)
         Neg a expr -> Neg (f a) (fmap f expr)
         Not a expr -> Not (f a) (fmap f expr)
