@@ -1,0 +1,11 @@
+int main() {
+  int[][] a = new int[][5];
+  int[] b = new int[10];
+
+  a[3] = b;
+  printInt((a[3])[5]);
+  b[5] = 8;
+  printInt((a[3])[5]);
+  
+  return 0;
+}

@@ -82,7 +82,7 @@ EString.   Expr7 ::= String ;
 
 EApp.      Expr6 ::= CIdent "(" [Expr] ")" ;
 
-EAt.       Expr6 ::= Expr7 "[" Expr "]" ;
+EAt.       Expr6 ::= Expr6 "[" Expr "]" ;
 
 ELength.   Expr5 ::= Expr6 "." "length" ;
 

@@ -97,7 +97,7 @@ All other symbols are terminals.
   |  |  **|**  | //String// 
   |  |  **|**  | ``(`` //Expr// ``)`` 
   | //Expr6// | -> | //CIdent// ``(`` //[Expr]// ``)`` 
-  |  |  **|**  | //Expr7// ``[`` //Expr// ``]`` 
+  |  |  **|**  | //Expr6// ``[`` //Expr// ``]`` 
   |  |  **|**  | //Expr7// 
   | //Expr5// | -> | //Expr6// ``.`` ``length`` 
   |  |  **|**  | ``-`` //Expr6// 
