@@ -32,9 +32,9 @@ separator nonempty Item "," ;
 
 Ass.   Stmt ::= LValue "=" Expr ";" ;
 
-Incr.      Stmt ::= CIdent "++"  ";" ;
+Incr.      Stmt ::= LValue "++"  ";" ;
 
-Decr.      Stmt ::= CIdent "--"  ";" ;
+Decr.      Stmt ::= LValue "--"  ";" ;
 
 Ret.       Stmt ::= "return" Expr ";" ;
 
@@ -49,6 +49,8 @@ While.     Stmt ::= "while" "(" Expr ")" Stmt ;
 ForEach.   Stmt ::= "for" "(" Type CIdent ":" Expr ")" Stmt ;
 
 SExp.      Stmt ::= Expr  ";" ;
+
+-- LValues ------------------------------------------------
 
 LVar.      LValue ::= CIdent ;
 

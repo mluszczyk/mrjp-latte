@@ -113,8 +113,8 @@ instance Print (Stmt a) where
     BStmt _ block -> prPrec i 0 (concatD [prt 0 block])
     Decl _ type_ items -> prPrec i 0 (concatD [prt 0 type_, prt 0 items, doc (showString ";")])
     Ass _ lvalue expr -> prPrec i 0 (concatD [prt 0 lvalue, doc (showString "="), prt 0 expr, doc (showString ";")])
-    Incr _ cident -> prPrec i 0 (concatD [prt 0 cident, doc (showString "++"), doc (showString ";")])
-    Decr _ cident -> prPrec i 0 (concatD [prt 0 cident, doc (showString "--"), doc (showString ";")])
+    Incr _ lvalue -> prPrec i 0 (concatD [prt 0 lvalue, doc (showString "++"), doc (showString ";")])
+    Decr _ lvalue -> prPrec i 0 (concatD [prt 0 lvalue, doc (showString "--"), doc (showString ";")])
     Ret _ expr -> prPrec i 0 (concatD [doc (showString "return"), prt 0 expr, doc (showString ";")])
     VRet _ -> prPrec i 0 (concatD [doc (showString "return"), doc (showString ";")])
     Cond _ expr stmt -> prPrec i 0 (concatD [doc (showString "if"), doc (showString "("), prt 0 expr, doc (showString ")"), prt 0 stmt])
@@ -148,11 +148,11 @@ instance Print (Type a) where
   prtList _ (x:xs) = concatD [prt 0 x, doc (showString ","), prt 0 xs]
 instance Print (Expr a) where
   prt i e = case e of
-    ELValue _ lvalue -> prPrec i 6 (concatD [prt 0 lvalue])
     ELitInt _ n -> prPrec i 7 (concatD [prt 0 n])
     ELitTrue _ -> prPrec i 7 (concatD [doc (showString "true")])
     ELitFalse _ -> prPrec i 7 (concatD [doc (showString "false")])
     EString _ str -> prPrec i 7 (concatD [prt 0 str])
+    ELValue _ lvalue -> prPrec i 6 (concatD [prt 0 lvalue])
     EApp _ cident exprs -> prPrec i 6 (concatD [prt 0 cident, doc (showString "("), prt 0 exprs, doc (showString ")")])
     ELength _ expr -> prPrec i 5 (concatD [prt 6 expr, doc (showString "."), doc (showString "length")])
     Neg _ expr -> prPrec i 5 (concatD [doc (showString "-"), prt 6 expr])

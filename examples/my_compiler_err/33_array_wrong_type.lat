@@ -1,0 +1,4 @@
+int main() {
+  (new int[15])[3] = "blah";
+  return 0;
+}

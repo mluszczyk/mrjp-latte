@@ -37,8 +37,8 @@ data Stmt a
     | BStmt a (Block a)
     | Decl a (Type a) [Item a]
     | Ass a (LValue a) (Expr a)
-    | Incr a CIdent
-    | Decr a CIdent
+    | Incr a (LValue a)
+    | Decr a (LValue a)
     | Ret a (Expr a)
     | VRet a
     | Cond a (Expr a) (Stmt a)
@@ -54,8 +54,8 @@ instance Functor Stmt where
         BStmt a block -> BStmt (f a) (fmap f block)
         Decl a type_ items -> Decl (f a) (fmap f type_) (map (fmap f) items)
         Ass a lvalue expr -> Ass (f a) (fmap f lvalue) (fmap f expr)
-        Incr a cident -> Incr (f a) cident
-        Decr a cident -> Decr (f a) cident
+        Incr a lvalue -> Incr (f a) (fmap f lvalue)
+        Decr a lvalue -> Decr (f a) (fmap f lvalue)
         Ret a expr -> Ret (f a) (fmap f expr)
         VRet a -> VRet (f a)
         Cond a expr stmt -> Cond (f a) (fmap f expr) (fmap f stmt)
@@ -95,11 +95,11 @@ instance Functor Type where
         Array a type_ -> Array (f a) (fmap f type_)
         Fun a type_ types -> Fun (f a) (fmap f type_) (map (fmap f) types)
 data Expr a
-    = ELValue a (LValue a)
-    | ELitInt a Integer
+    = ELitInt a Integer
     | ELitTrue a
     | ELitFalse a
     | EString a String
+    | ELValue a (LValue a)
     | EApp a CIdent [Expr a]
     | ELength a (Expr a)
     | Neg a (Expr a)
@@ -114,11 +114,11 @@ data Expr a
 
 instance Functor Expr where
     fmap f x = case x of
-        ELValue a lvalue -> ELValue (f a) (fmap f lvalue)
         ELitInt a integer -> ELitInt (f a) integer
         ELitTrue a -> ELitTrue (f a)
         ELitFalse a -> ELitFalse (f a)
         EString a string -> EString (f a) string
+        ELValue a lvalue -> ELValue (f a) (fmap f lvalue)
         EApp a cident exprs -> EApp (f a) cident (map (fmap f) exprs)
         ELength a expr -> ELength (f a) (fmap f expr)
         Neg a expr -> Neg (f a) (fmap f expr)

@@ -68,8 +68,8 @@ All other symbols are terminals.
   |  |  **|**  | //Block// 
   |  |  **|**  | //Type// //[Item]// ``;`` 
   |  |  **|**  | //LValue// ``=`` //Expr// ``;`` 
-  |  |  **|**  | //CIdent// ``++`` ``;`` 
-  |  |  **|**  | //CIdent// ``--`` ``;`` 
+  |  |  **|**  | //LValue// ``++`` ``;`` 
+  |  |  **|**  | //LValue// ``--`` ``;`` 
   |  |  **|**  | ``return`` //Expr// ``;`` 
   |  |  **|**  | ``return`` ``;`` 
   |  |  **|**  | ``if`` ``(`` //Expr// ``)`` //Stmt// 
@@ -91,14 +91,14 @@ All other symbols are terminals.
   | //[Type]// | -> | **eps**
   |  |  **|**  | //Type// 
   |  |  **|**  | //Type// ``,`` //[Type]// 
-  | //Expr6// | -> | //LValue// 
-  |  |  **|**  | //CIdent// ``(`` //[Expr]// ``)`` 
-  |  |  **|**  | //Expr7// 
   | //Expr7// | -> | //Integer// 
   |  |  **|**  | ``true`` 
   |  |  **|**  | ``false`` 
   |  |  **|**  | //String// 
   |  |  **|**  | ``(`` //Expr// ``)`` 
+  | //Expr6// | -> | //LValue// 
+  |  |  **|**  | //CIdent// ``(`` //[Expr]// ``)`` 
+  |  |  **|**  | //Expr7// 
   | //Expr5// | -> | //Expr6// ``.`` ``length`` 
   |  |  **|**  | ``-`` //Expr6// 
   |  |  **|**  | ``!`` //Expr6// 

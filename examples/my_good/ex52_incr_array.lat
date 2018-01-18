@@ -1,0 +1,17 @@
+int[] incrarray(int[] array) {
+  int i = 0;
+  while (i < array.length) {
+    array[i]++;
+    i++;
+  }
+  return array;
+}
+
+int main() {
+  int[] array = new int[40];
+  incrarray(array);
+  incrarray(array);
+  printInt(array[3]);
+  printInt(array[39]);
+  return 0;
+}

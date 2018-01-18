@@ -158,10 +158,10 @@ Stmt :: {
 | LValue '=' Expr ';' {
   (fst $1, AbsLatte.Ass (fst $1)(snd $1)(snd $3)) 
 }
-| CIdent '++' ';' {
+| LValue '++' ';' {
   (fst $1, AbsLatte.Incr (fst $1)(snd $1)) 
 }
-| CIdent '--' ';' {
+| LValue '--' ';' {
   (fst $1, AbsLatte.Decr (fst $1)(snd $1)) 
 }
 | 'return' Expr ';' {
@@ -248,19 +248,6 @@ ListType :: {
   (fst $1, (:) (snd $1)(snd $3)) 
 }
 
-Expr6 :: {
-  (Maybe (Int, Int), Expr (Maybe (Int, Int)))
-}
-: LValue {
-  (fst $1, AbsLatte.ELValue (fst $1)(snd $1)) 
-}
-| CIdent '(' ListExpr ')' {
-  (fst $1, AbsLatte.EApp (fst $1)(snd $1)(snd $3)) 
-}
-| Expr7 {
-  (fst $1, snd $1)
-}
-
 Expr7 :: {
   (Maybe (Int, Int), Expr (Maybe (Int, Int)))
 }
@@ -278,6 +265,19 @@ Expr7 :: {
 }
 | '(' Expr ')' {
   (Just (tokenLineCol $1), snd $2)
+}
+
+Expr6 :: {
+  (Maybe (Int, Int), Expr (Maybe (Int, Int)))
+}
+: LValue {
+  (fst $1, AbsLatte.ELValue (fst $1)(snd $1)) 
+}
+| CIdent '(' ListExpr ')' {
+  (fst $1, AbsLatte.EApp (fst $1)(snd $1)(snd $3)) 
+}
+| Expr7 {
+  (fst $1, snd $1)
 }
 
 Expr5 :: {

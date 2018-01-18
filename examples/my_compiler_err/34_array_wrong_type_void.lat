@@ -1,0 +1,7 @@
+void foo() {
+}
+
+int main() {
+  (new int[15])[3] = foo();
+  return 0;
+}

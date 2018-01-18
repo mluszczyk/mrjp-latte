@@ -30,8 +30,8 @@ transStmt x = case x of
   BStmt _ block -> failure x
   Decl _ type_ items -> failure x
   Ass _ lvalue expr -> failure x
-  Incr _ cident -> failure x
-  Decr _ cident -> failure x
+  Incr _ lvalue -> failure x
+  Decr _ lvalue -> failure x
   Ret _ expr -> failure x
   VRet _ -> failure x
   Cond _ expr stmt -> failure x
@@ -57,11 +57,11 @@ transType x = case x of
   Fun _ type_ types -> failure x
 transExpr :: Show a => Expr a -> Result
 transExpr x = case x of
-  ELValue _ lvalue -> failure x
   ELitInt _ integer -> failure x
   ELitTrue _ -> failure x
   ELitFalse _ -> failure x
   EString _ string -> failure x
+  ELValue _ lvalue -> failure x
   EApp _ cident exprs -> failure x
   ELength _ expr -> failure x
   Neg _ expr -> failure x
