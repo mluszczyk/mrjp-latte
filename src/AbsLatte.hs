@@ -36,8 +36,7 @@ data Stmt a
     = Empty a
     | BStmt a (Block a)
     | Decl a (Type a) [Item a]
-    | Ass a CIdent (Expr a)
-    | SetItem a CIdent (Expr a) (Expr a)
+    | Ass a (LValue a) (Expr a)
     | Incr a CIdent
     | Decr a CIdent
     | Ret a (Expr a)
@@ -54,8 +53,7 @@ instance Functor Stmt where
         Empty a -> Empty (f a)
         BStmt a block -> BStmt (f a) (fmap f block)
         Decl a type_ items -> Decl (f a) (fmap f type_) (map (fmap f) items)
-        Ass a cident expr -> Ass (f a) cident (fmap f expr)
-        SetItem a cident expr1 expr2 -> SetItem (f a) cident (fmap f expr1) (fmap f expr2)
+        Ass a lvalue expr -> Ass (f a) (fmap f lvalue) (fmap f expr)
         Incr a cident -> Incr (f a) cident
         Decr a cident -> Decr (f a) cident
         Ret a expr -> Ret (f a) (fmap f expr)
@@ -72,6 +70,13 @@ instance Functor Item where
     fmap f x = case x of
         NoInit a cident -> NoInit (f a) cident
         Init a cident expr -> Init (f a) cident (fmap f expr)
+data LValue a = LVar a CIdent | LAt a (Expr a) (Expr a)
+  deriving (Eq, Ord, Show, Read)
+
+instance Functor LValue where
+    fmap f x = case x of
+        LVar a cident -> LVar (f a) cident
+        LAt a expr1 expr2 -> LAt (f a) (fmap f expr1) (fmap f expr2)
 data Type a
     = Int a
     | Str a
@@ -90,13 +95,12 @@ instance Functor Type where
         Array a type_ -> Array (f a) (fmap f type_)
         Fun a type_ types -> Fun (f a) (fmap f type_) (map (fmap f) types)
 data Expr a
-    = EVar a CIdent
+    = ELValue a (LValue a)
     | ELitInt a Integer
     | ELitTrue a
     | ELitFalse a
     | EString a String
     | EApp a CIdent [Expr a]
-    | EAt a (Expr a) (Expr a)
     | ELength a (Expr a)
     | Neg a (Expr a)
     | Not a (Expr a)
@@ -110,13 +114,12 @@ data Expr a
 
 instance Functor Expr where
     fmap f x = case x of
-        EVar a cident -> EVar (f a) cident
+        ELValue a lvalue -> ELValue (f a) (fmap f lvalue)
         ELitInt a integer -> ELitInt (f a) integer
         ELitTrue a -> ELitTrue (f a)
         ELitFalse a -> ELitFalse (f a)
         EString a string -> EString (f a) string
         EApp a cident exprs -> EApp (f a) cident (map (fmap f) exprs)
-        EAt a expr1 expr2 -> EAt (f a) (fmap f expr1) (fmap f expr2)
         ELength a expr -> ELength (f a) (fmap f expr)
         Neg a expr -> Neg (f a) (fmap f expr)
         Not a expr -> Not (f a) (fmap f expr)

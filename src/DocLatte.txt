@@ -37,8 +37,8 @@ The reserved words used in Latte are the following:
 
 The symbols used in Latte are the following:
   | ( | ) | , | {
-  | } | ; | = | [
-  | ] | ++ | -- | :
+  | } | ; | = | ++
+  | -- | : | [ | ]
   | [] | . | - | !
   | && | || | + | *
   | / | % | < | <=
@@ -67,8 +67,7 @@ All other symbols are terminals.
   | //Stmt// | -> | ``;`` 
   |  |  **|**  | //Block// 
   |  |  **|**  | //Type// //[Item]// ``;`` 
-  |  |  **|**  | //CIdent// ``=`` //Expr// ``;`` 
-  |  |  **|**  | //CIdent// ``[`` //Expr// ``]`` ``=`` //Expr// ``;`` 
+  |  |  **|**  | //LValue// ``=`` //Expr// ``;`` 
   |  |  **|**  | //CIdent// ``++`` ``;`` 
   |  |  **|**  | //CIdent// ``--`` ``;`` 
   |  |  **|**  | ``return`` //Expr// ``;`` 
@@ -82,6 +81,8 @@ All other symbols are terminals.
   |  |  **|**  | //CIdent// ``=`` //Expr// 
   | //[Item]// | -> | //Item// 
   |  |  **|**  | //Item// ``,`` //[Item]// 
+  | //LValue// | -> | //CIdent// 
+  |  |  **|**  | //Expr6// ``[`` //Expr// ``]`` 
   | //Type// | -> | ``int`` 
   |  |  **|**  | ``string`` 
   |  |  **|**  | ``boolean`` 
@@ -90,15 +91,14 @@ All other symbols are terminals.
   | //[Type]// | -> | **eps**
   |  |  **|**  | //Type// 
   |  |  **|**  | //Type// ``,`` //[Type]// 
-  | //Expr7// | -> | //CIdent// 
-  |  |  **|**  | //Integer// 
+  | //Expr6// | -> | //LValue// 
+  |  |  **|**  | //CIdent// ``(`` //[Expr]// ``)`` 
+  |  |  **|**  | //Expr7// 
+  | //Expr7// | -> | //Integer// 
   |  |  **|**  | ``true`` 
   |  |  **|**  | ``false`` 
   |  |  **|**  | //String// 
   |  |  **|**  | ``(`` //Expr// ``)`` 
-  | //Expr6// | -> | //CIdent// ``(`` //[Expr]// ``)`` 
-  |  |  **|**  | //Expr6// ``[`` //Expr// ``]`` 
-  |  |  **|**  | //Expr7// 
   | //Expr5// | -> | //Expr6// ``.`` ``length`` 
   |  |  **|**  | ``-`` //Expr6// 
   |  |  **|**  | ``!`` //Expr6// 

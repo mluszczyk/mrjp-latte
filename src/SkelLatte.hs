@@ -29,8 +29,7 @@ transStmt x = case x of
   Empty _ -> failure x
   BStmt _ block -> failure x
   Decl _ type_ items -> failure x
-  Ass _ cident expr -> failure x
-  SetItem _ cident expr1 expr2 -> failure x
+  Ass _ lvalue expr -> failure x
   Incr _ cident -> failure x
   Decr _ cident -> failure x
   Ret _ expr -> failure x
@@ -44,6 +43,10 @@ transItem :: Show a => Item a -> Result
 transItem x = case x of
   NoInit _ cident -> failure x
   Init _ cident expr -> failure x
+transLValue :: Show a => LValue a -> Result
+transLValue x = case x of
+  LVar _ cident -> failure x
+  LAt _ expr1 expr2 -> failure x
 transType :: Show a => Type a -> Result
 transType x = case x of
   Int _ -> failure x
@@ -54,13 +57,12 @@ transType x = case x of
   Fun _ type_ types -> failure x
 transExpr :: Show a => Expr a -> Result
 transExpr x = case x of
-  EVar _ cident -> failure x
+  ELValue _ lvalue -> failure x
   ELitInt _ integer -> failure x
   ELitTrue _ -> failure x
   ELitFalse _ -> failure x
   EString _ string -> failure x
   EApp _ cident exprs -> failure x
-  EAt _ expr1 expr2 -> failure x
   ELength _ expr -> failure x
   Neg _ expr -> failure x
   Not _ expr -> failure x

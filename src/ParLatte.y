@@ -155,11 +155,8 @@ Stmt :: {
 | Type ListItem ';' {
   (fst $1, AbsLatte.Decl (fst $1)(snd $1)(snd $2)) 
 }
-| CIdent '=' Expr ';' {
+| LValue '=' Expr ';' {
   (fst $1, AbsLatte.Ass (fst $1)(snd $1)(snd $3)) 
-}
-| CIdent '[' Expr ']' '=' Expr ';' {
-  (fst $1, AbsLatte.SetItem (fst $1)(snd $1)(snd $3)(snd $6)) 
 }
 | CIdent '++' ';' {
   (fst $1, AbsLatte.Incr (fst $1)(snd $1)) 
@@ -209,6 +206,16 @@ ListItem :: {
   (fst $1, (:) (snd $1)(snd $3)) 
 }
 
+LValue :: {
+  (Maybe (Int, Int), LValue (Maybe (Int, Int)))
+}
+: CIdent {
+  (fst $1, AbsLatte.LVar (fst $1)(snd $1)) 
+}
+| Expr6 '[' Expr ']' {
+  (fst $1, AbsLatte.LAt (fst $1)(snd $1)(snd $3)) 
+}
+
 Type :: {
   (Maybe (Int, Int), Type (Maybe (Int, Int)))
 }
@@ -241,13 +248,23 @@ ListType :: {
   (fst $1, (:) (snd $1)(snd $3)) 
 }
 
+Expr6 :: {
+  (Maybe (Int, Int), Expr (Maybe (Int, Int)))
+}
+: LValue {
+  (fst $1, AbsLatte.ELValue (fst $1)(snd $1)) 
+}
+| CIdent '(' ListExpr ')' {
+  (fst $1, AbsLatte.EApp (fst $1)(snd $1)(snd $3)) 
+}
+| Expr7 {
+  (fst $1, snd $1)
+}
+
 Expr7 :: {
   (Maybe (Int, Int), Expr (Maybe (Int, Int)))
 }
-: CIdent {
-  (fst $1, AbsLatte.EVar (fst $1)(snd $1)) 
-}
-| Integer {
+: Integer {
   (fst $1, AbsLatte.ELitInt (fst $1)(snd $1)) 
 }
 | 'true' {
@@ -261,19 +278,6 @@ Expr7 :: {
 }
 | '(' Expr ')' {
   (Just (tokenLineCol $1), snd $2)
-}
-
-Expr6 :: {
-  (Maybe (Int, Int), Expr (Maybe (Int, Int)))
-}
-: CIdent '(' ListExpr ')' {
-  (fst $1, AbsLatte.EApp (fst $1)(snd $1)(snd $3)) 
-}
-| Expr6 '[' Expr ']' {
-  (fst $1, AbsLatte.EAt (fst $1)(snd $1)(snd $3)) 
-}
-| Expr7 {
-  (fst $1, snd $1)
 }
 
 Expr5 :: {

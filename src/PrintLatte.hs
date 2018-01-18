@@ -112,8 +112,7 @@ instance Print (Stmt a) where
     Empty _ -> prPrec i 0 (concatD [doc (showString ";")])
     BStmt _ block -> prPrec i 0 (concatD [prt 0 block])
     Decl _ type_ items -> prPrec i 0 (concatD [prt 0 type_, prt 0 items, doc (showString ";")])
-    Ass _ cident expr -> prPrec i 0 (concatD [prt 0 cident, doc (showString "="), prt 0 expr, doc (showString ";")])
-    SetItem _ cident expr1 expr2 -> prPrec i 0 (concatD [prt 0 cident, doc (showString "["), prt 0 expr1, doc (showString "]"), doc (showString "="), prt 0 expr2, doc (showString ";")])
+    Ass _ lvalue expr -> prPrec i 0 (concatD [prt 0 lvalue, doc (showString "="), prt 0 expr, doc (showString ";")])
     Incr _ cident -> prPrec i 0 (concatD [prt 0 cident, doc (showString "++"), doc (showString ";")])
     Decr _ cident -> prPrec i 0 (concatD [prt 0 cident, doc (showString "--"), doc (showString ";")])
     Ret _ expr -> prPrec i 0 (concatD [doc (showString "return"), prt 0 expr, doc (showString ";")])
@@ -131,6 +130,11 @@ instance Print (Item a) where
     Init _ cident expr -> prPrec i 0 (concatD [prt 0 cident, doc (showString "="), prt 0 expr])
   prtList _ [x] = concatD [prt 0 x]
   prtList _ (x:xs) = concatD [prt 0 x, doc (showString ","), prt 0 xs]
+instance Print (LValue a) where
+  prt i e = case e of
+    LVar _ cident -> prPrec i 0 (concatD [prt 0 cident])
+    LAt _ expr1 expr2 -> prPrec i 0 (concatD [prt 6 expr1, doc (showString "["), prt 0 expr2, doc (showString "]")])
+
 instance Print (Type a) where
   prt i e = case e of
     Int _ -> prPrec i 0 (concatD [doc (showString "int")])
@@ -144,13 +148,12 @@ instance Print (Type a) where
   prtList _ (x:xs) = concatD [prt 0 x, doc (showString ","), prt 0 xs]
 instance Print (Expr a) where
   prt i e = case e of
-    EVar _ cident -> prPrec i 7 (concatD [prt 0 cident])
+    ELValue _ lvalue -> prPrec i 6 (concatD [prt 0 lvalue])
     ELitInt _ n -> prPrec i 7 (concatD [prt 0 n])
     ELitTrue _ -> prPrec i 7 (concatD [doc (showString "true")])
     ELitFalse _ -> prPrec i 7 (concatD [doc (showString "false")])
     EString _ str -> prPrec i 7 (concatD [prt 0 str])
     EApp _ cident exprs -> prPrec i 6 (concatD [prt 0 cident, doc (showString "("), prt 0 exprs, doc (showString ")")])
-    EAt _ expr1 expr2 -> prPrec i 6 (concatD [prt 6 expr1, doc (showString "["), prt 0 expr2, doc (showString "]")])
     ELength _ expr -> prPrec i 5 (concatD [prt 6 expr, doc (showString "."), doc (showString "length")])
     Neg _ expr -> prPrec i 5 (concatD [doc (showString "-"), prt 6 expr])
     Not _ expr -> prPrec i 5 (concatD [doc (showString "!"), prt 6 expr])

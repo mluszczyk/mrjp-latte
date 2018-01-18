@@ -1,0 +1,8 @@
+int main() {
+  int[][] tab = new int[][15];
+  tab[3] = new int[8];
+  printInt(tab[3][8]);
+  tab[3][8] = 21;
+  printInt(tab[3][8]);
+  return 0;
+}

@@ -283,10 +283,22 @@ compileStmt (AbsLatte.Ret position expr)=
      checkType position expectedRetType type_ "return"
      emitInstruction $ LLVM.IRet (typeToLLVM type_) value
 
-compileStmt (AbsLatte.Ass pos ident expr) =
+compileStmt (AbsLatte.Ass pos (AbsLatte.LVar _ ident) expr) =
   do valueMap <- readValueMapS
      (type_, ptr) <- lookupVariable ident valueMap (compilePosition pos)
      exprInStatement $ compileAssign pos expr type_ ptr
+
+compileStmt (AbsLatte.Ass pos (AbsLatte.LAt _ arrayExpr indexExpr) rightExpr) =
+  do (array, arrayType) <- exprInStatement $ compileExpr arrayExpr
+     elemType <- exprInStatement $ elementType arrayType pos
+     (num, numType) <- exprInStatement $ compileExpr indexExpr
+     checkType pos LatteCommon.Int numType "setting array element"
+     (elemPtr, _) <- exprInStatement $
+       arrayElementPtrVal elemType array num
+     (rightVal, rightValType) <- exprInStatement $ compileExpr rightExpr
+     checkType pos elemType rightValType "setting array element"
+     let llvmElemType = typeToLLVM elemType
+     emitInstruction $ LLVM.IStore llvmElemType rightVal llvmElemType elemPtr
 
 compileStmt (AbsLatte.Decl position type_ decls) =
    do checkNotVoid latteType (CE.CEVoidDeclaration (compilePosition position))
@@ -400,14 +412,6 @@ compileStmt (AbsLatte.ForEach pos absIterType iterIdent arrayExpr stmt) =
                        bodyBlock contBlock
      emitInstruction $ LLVM.ILabel contBlock
 
-compileStmt (AbsLatte.SetItem pos arrayIdent indexExpr rightExpr) =
-  do (elemPtr, elemType) <- exprInStatement $
-       arrayElementPtr pos arrayIdent indexExpr
-     (rightVal, rightValType) <- exprInStatement $ compileExpr rightExpr
-     checkType pos elemType rightValType "setting array element"
-     let llvmElemType = typeToLLVM elemType
-     emitInstruction $ LLVM.IStore llvmElemType rightVal llvmElemType elemPtr
-
 compileIncrDecrHelper :: Position -> AbsLatte.CIdent -> LLVM.ArithmOp -> StatementM ()
 compileIncrDecrHelper pos ident arithmOp =
   do valueMap <- readValueMapS
@@ -420,7 +424,7 @@ compileIncrDecrHelper pos ident arithmOp =
      emitInstruction $ LLVM.IStore LLVM.Ti32 (LLVM.VRegister result) LLVM.Ti32 ptr
 
 compileExpr :: AbsLatte.Expr Position -> ExprM (LLVM.Value, LatteCommon.Type)
-compileExpr (AbsLatte.EVar pos ident) =
+compileExpr (AbsLatte.ELValue pos (AbsLatte.LVar _ ident)) =
   do valueMap <- readValueMap
      (type_, ptr) <- lookupVariable ident valueMap (compilePosition pos)
      reg <- getNextRegisterE
@@ -509,7 +513,7 @@ compileExpr (AbsLatte.EMul pos exp1 mulOp exp2) =
 compileExpr (AbsLatte.ERel pos exp1 relOp exp2) =
   compileArithm pos exp1 (compileRelOp relOp) exp2
 
-compileExpr (AbsLatte.EAt pos arrayExpr numExpr) =
+compileExpr (AbsLatte.ELValue pos (AbsLatte.LAt _ arrayExpr numExpr)) =
   do (array, arrayType) <- compileExpr arrayExpr
      elemType <- elementType arrayType pos
      (num, _) <- compileExpr numExpr
@@ -576,18 +580,18 @@ compileExpr (AbsLatte.ENew pos absType numExpr) =
       LatteCommon.Boolean -> 1
       LatteCommon.Void -> error "elementSize Void: unreachable"
 
-arrayElementPtr :: Position -> AbsLatte.CIdent -> AbsLatte.Expr Position
-                   -> ExprM (LLVM.Register, LatteCommon.Type)
-arrayElementPtr pos arrayIdent numExpr =
-  do (num, numType) <- compileExpr numExpr
-     checkType pos LatteCommon.Int numType "array index"
-     valueMap <- readValueMap
-     (arrayType, arrayPtr) <- lookupVariable arrayIdent valueMap (compilePosition pos)
-     array <- getNextRegisterE
-     emitInstruction $ LLVM.ILoad (typeToLLVM arrayType) (typeToLLVM arrayType)
-                                  arrayPtr array
-     elemType <- elementType arrayType pos
-     arrayElementPtrVal elemType (LLVM.VRegister array) num
+-- arrayElementPtr :: Position -> AbsLatte.CIdent -> AbsLatte.Expr Position
+--                    -> ExprM (LLVM.Register, LatteCommon.Type)
+-- arrayElementPtr pos arrayIdent numExpr =
+--   do (num, numType) <- compileExpr numExpr
+--      checkType pos LatteCommon.Int numType "array index"
+--      valueMap <- readValueMap
+--      (arrayType, arrayPtr) <- lookupVariable arrayIdent valueMap (compilePosition pos)
+--      array <- getNextRegisterE
+--      emitInstruction $ LLVM.ILoad (typeToLLVM arrayType) (typeToLLVM arrayType)
+--                                   arrayPtr array
+--      elemType <- elementType arrayType pos
+--      arrayElementPtrVal elemType (LLVM.VRegister array) num
 
 arrayElementPtrVal :: LatteCommon.Type -> LLVM.Value -> LLVM.Value
                       -> ExprM (LLVM.Register, LatteCommon.Type)

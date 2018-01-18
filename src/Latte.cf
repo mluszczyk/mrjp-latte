@@ -30,9 +30,7 @@ Init.      Item ::= CIdent "=" Expr ;
 
 separator nonempty Item "," ;
 
-Ass.       Stmt ::= CIdent "=" Expr  ";" ;
-
-SetItem.   Stmt ::= CIdent "[" Expr "]" "=" Expr ";" ;
+Ass.   Stmt ::= LValue "=" Expr ";" ;
 
 Incr.      Stmt ::= CIdent "++"  ";" ;
 
@@ -52,6 +50,10 @@ ForEach.   Stmt ::= "for" "(" Type CIdent ":" Expr ")" Stmt ;
 
 SExp.      Stmt ::= Expr  ";" ;
 
+LVar.      LValue ::= CIdent ;
+
+LAt.       LValue ::= Expr6 "[" Expr "]" ;
+
 -- Types ---------------------------------------------------
 
 Int.       Type ::= "int" ;
@@ -70,8 +72,6 @@ separator  Type "," ;
 
 -- Expressions ---------------------------------------------
 
-EVar.      Expr7 ::= CIdent ;
-
 ELitInt.   Expr7 ::= Integer ;
 
 ELitTrue.  Expr7 ::= "true" ;
@@ -80,9 +80,9 @@ ELitFalse. Expr7 ::= "false" ;
 
 EString.   Expr7 ::= String ;
 
-EApp.      Expr6 ::= CIdent "(" [Expr] ")" ;
+ELValue.   Expr6 ::= LValue ;
 
-EAt.       Expr6 ::= Expr6 "[" Expr "]" ;
+EApp.      Expr6 ::= CIdent "(" [Expr] ")" ;
 
 ELength.   Expr5 ::= Expr6 "." "length" ;
 

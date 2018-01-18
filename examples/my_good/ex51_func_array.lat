@@ -1,0 +1,14 @@
+int[] range(int num) {
+  int[] res = new int[num];
+  int i = 0;
+  while (i < num) {
+    res[i] = i;
+    i++;
+  }
+  return res;
+}
+
+int main() {
+  printInt(range(5)[3]);
+  return 0;
+}
